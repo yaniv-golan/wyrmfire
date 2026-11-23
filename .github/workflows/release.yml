@@ -1,0 +1,54 @@
+name: Release
+# Builds the release and attaches it to a DRAFT GitHub release. Never run by a
+# branch push: only by hand (workflow_dispatch) or by pushing a v* tag.
+# Attaches code only (docs/RELEASE.md): no WAD, no level disk, nothing
+# converted from a WAD. Freedoom is downloaded for the converter tests only.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version, X.Y.Z (the tag is vX.Y.Z)
+        required: true
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+concurrency: { group: release, cancel-in-progress: false }
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Version
+        id: v
+        run: |
+          v="${{ github.event.inputs.version }}"; [ -n "$v" ] || v="${GITHUB_REF_NAME#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::bad version '$v'"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/toolchain
+      - id: fd
+        uses: ./.github/actions/freedoom
+      - name: Build engine (must equal bin/wyrmfire.bin)
+        run: |
+          tools/build-engine.sh build
+          cmp build/wyrmfire.bin bin/wyrmfire.bin
+      - name: Converter tests
+        run: FREEDOOM1=${{ steps.fd.outputs.dir }}/freedoom1.wad node --test test/converter.test.mjs
+      - name: Repository guard at HEAD
+        run: node tools/guard/scan.mjs .
+      - name: Assemble and check
+        run: |
+          node tools/make-release.mjs --version "${{ steps.v.outputs.version }}" --engine build/wyrmfire.bin --out dist
+          node tools/check-dist.mjs dist
+          (cd dist && sha256sum -c SHA256SUMS wyrmfire.bin.sha256)
+      - uses: actions/upload-artifact@v4
+        with: { name: release, path: dist, if-no-files-found: error }
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.v.outputs.version }}"
+          gh release create "v$v" dist/* --draft --title "WYRMFIRE $v" --target "$GITHUB_SHA" \
+            --notes "WYRMFIRE $v for the Dragon 64: engine (wyrmfire.bin, SHA-256 in wyrmfire.bin.sha256 and SHA256SUMS), symbols, level converter and manifest.json. No level data is included; build a level disk from a Doom-format WAD with wyrmfire-convert.js."

@@ -1,0 +1,43 @@
+name: Pinned CMOC + LWTOOLS
+description: Install the exact CMOC and LWTOOLS versions in tools/versions.env, verified by SHA-256.
+runs:
+  using: composite
+  steps:
+    - name: Cache toolchain
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.local/wyrmfire-toolchain
+        key: toolchain-${{ hashFiles('tools/versions.env') }}
+    - name: Build toolchain
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        . tools/versions.env
+        prefix="$HOME/.local/wyrmfire-toolchain"; work=$(mktemp -d)
+        fetch() { # url expected-sha256 file
+          if ! curl -fsSL --retry 4 -o "$work/$3" "$1"; then
+            echo "::error::cannot fetch $1"; echo "Available CMOC releases:"
+            curl -fsSL http://sarrazip.com/dev/cmoc.html | grep -o 'cmoc-[0-9.]*\.tar\.gz' | sort -uV || true
+            curl -fsSL http://sarrazip.com/dev/ | grep -o 'cmoc-[0-9.]*\.tar\.gz' | sort -uV || true
+            exit 1
+          fi
+          actual=$(sha256sum "$work/$3" | cut -d' ' -f1)
+          echo "$3 sha256 $actual"
+          if [ -n "$2" ] && [ "$actual" != "$2" ]; then echo "::error::$3 SHA-256 $actual, expected $2"; exit 1; fi
+          if [ -z "$2" ]; then echo "::warning::$3 is not pinned by SHA-256 yet; computed $actual"; fi
+        }
+        fetch "$LWTOOLS_URL" "$LWTOOLS_SHA256" lwtools.tar.gz
+        fetch "$CMOC_URL" "$CMOC_SHA256" cmoc.tar.gz
+        tar -xzf "$work/lwtools.tar.gz" -C "$work"; tar -xzf "$work/cmoc.tar.gz" -C "$work"
+        make -C "$work/lwtools-$LWTOOLS_VERSION" -j"$(nproc)" >/dev/null
+        make -C "$work/lwtools-$LWTOOLS_VERSION" install PREFIX="$prefix" >/dev/null
+        export PATH="$prefix/bin:$PATH"
+        (cd "$work/cmoc-$CMOC_VERSION" && ./configure --prefix="$prefix" >/dev/null && make -j"$(nproc)" >/dev/null && make install >/dev/null)
+    - name: Add to PATH
+      shell: bash
+      run: |
+        echo "$HOME/.local/wyrmfire-toolchain/bin" >> "$GITHUB_PATH"
+        "$HOME/.local/wyrmfire-toolchain/bin/cmoc" --version | head -1
+        "$HOME/.local/wyrmfire-toolchain/bin/lwasm" --version

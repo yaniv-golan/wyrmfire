@@ -1,0 +1,160 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  # yaniv-golan/CLOADM, a dev-only test dependency (never committed here).
+  CLOADM_COMMIT: c592fe266482d63f9df32afeea7872b32f58f38d
+  RELEASE_MAP: E1M1
+jobs:
+  engine:
+    name: Engine build is reproducible
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/toolchain
+      - name: Font is generated from tools/mkfont.mjs
+        run: node tools/mkfont.mjs | cmp - src/font.h
+      - name: Build
+        run: tools/build-engine.sh build
+      - name: Engine binary embeds no level data
+        run: |
+          # The engine must not reference any generated header or asset table.
+          ! grep -n 'game-assets\|assets\.h' src/*.c src/*.h
+      - name: Committed symbol list matches the build
+        run: |
+          grep '^Symbol: _' build/engine.map | grep 'native.o' | diff - bin/wyrmfire.sym
+      - name: Compare with the committed binary
+        run: |
+          sha256sum build/wyrmfire.bin
+          if ! cmp build/wyrmfire.bin bin/wyrmfire.bin; then
+            echo "::error::bin/wyrmfire.bin differs from the build (or is missing)."
+            echo "Built binary (base64) for review:"; base64 -w 120 build/wyrmfire.bin
+            echo "Symbols:"; grep '^Symbol: _' build/engine.map | grep 'native.o' 
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine
+          path: |
+            build/wyrmfire.bin
+            build/engine.map
+            build/compile.log
+          if-no-files-found: ignore
+
+  converter:
+    name: Converter tests and Python parity (Freedoom)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.13' }
+      - run: python -m pip install -r tools/reference/requirements.txt
+      - id: fd
+        uses: ./.github/actions/freedoom
+      - name: Unit tests
+        run: FREEDOOM1=${{ steps.fd.outputs.dir }}/freedoom1.wad node --test test/converter.test.mjs
+      - name: JS/Python parity on every Freedoom map
+        run: PARITY_WADS=${{ steps.fd.outputs.dir }}/freedoom1.wad:${{ steps.fd.outputs.dir }}/freedoom2.wad node --test test/parity.test.mjs
+      - name: Fit report
+        run: node tools/fit-report.mjs ${{ steps.fd.outputs.dir }}/freedoom1.wad | tee fit-report.txt
+      - name: Release level disk matches its pin
+        run: |
+          node converter/cli.mjs ${{ steps.fd.outputs.dir }}/freedoom1.wad --map "$RELEASE_MAP" --out level.vdk --info level.json
+          node tools/check-pins.mjs level.vdk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: freedoom-level
+          path: |
+            level.vdk
+            level.json
+            fit-report.txt
+
+  release-dry-run:
+    name: Release dry run (no publishing)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: ./.github/actions/toolchain
+      - id: fd
+        uses: ./.github/actions/freedoom
+      - name: Build engine (must equal bin/wyrmfire.bin)
+        run: |
+          tools/build-engine.sh build
+          cmp build/wyrmfire.bin bin/wyrmfire.bin
+      - name: Converter tests
+        run: FREEDOOM1=${{ steps.fd.outputs.dir }}/freedoom1.wad node --test test/converter.test.mjs
+      - name: Repository guard self-test and scan at HEAD
+        run: |
+          node --test test/guard.test.mjs
+          node tools/guard/scan.mjs .
+      - name: Assemble and check (version 0.0.0-dryrun)
+        run: |
+          node tools/make-release.mjs --version 0.0.0-dryrun --engine build/wyrmfire.bin --out dist
+          node tools/check-dist.mjs dist
+          (cd dist && sha256sum -c SHA256SUMS wyrmfire.bin.sha256)
+      - uses: actions/upload-artifact@v4
+        with: { name: release-dry-run, path: dist, if-no-files-found: error }
+
+  archives:
+    name: Archive inputs (zip, LHA, split self-extractor) and mutants
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Independent LHA encoder (jlha) and decoder (lhasa)
+        run: sudo apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq lhasa jlha-utils
+      - id: fd
+        uses: ./.github/actions/freedoom
+      - name: Build Freedoom archive fixtures (never committed)
+        run: sh test/fixtures/make-archives.sh ${{ steps.fd.outputs.dir }}/freedoom1.wad "$RUNNER_TEMP/fixtures"
+      - name: Archive tests
+        run: ARCHIVE_FIXTURES="$RUNNER_TEMP/fixtures" node --test test/archive.test.mjs
+      - name: Mutants must fail the archive tests
+        run: ARCHIVE_FIXTURES="$RUNNER_TEMP/fixtures" node --test test/mutation.test.mjs
+
+  smoke:
+    name: Boot in CLOADM (headless)
+    needs: [engine, converter]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { name: engine, path: build }
+      - uses: actions/download-artifact@v4
+        with: { name: freedoom-level, path: level }
+      - name: Fetch CLOADM at the pinned commit
+        run: |
+          git init -q cloadm && cd cloadm
+          git fetch -q --depth 1 https://github.com/yaniv-golan/CLOADM.git "$CLOADM_COMMIT"
+          git checkout -q FETCH_HEAD && git log --oneline -1
+      - name: Smoke test
+        run: |
+          cp level/level.vdk build/wyrmfire.vdk
+          CLOADM=$PWD/cloadm WYRMFIRE_BUILD=$PWD/build WYRMFIRE_SHOTS=$PWD/shots node --test test/smoke.test.mjs
+      - name: Disk-region stall probe
+        run: node test/harness/regions.cjs cloadm build shots/regions.json
+      - name: Swap harness
+        run: node test/harness/swap.cjs cloadm build
+      - name: Encounter harness
+        run: node test/harness/encounter.cjs cloadm build
+      - name: Route harness
+        timeout-minutes: 20
+        run: ONE_LEVEL=1 node test/harness/route.cjs cloadm build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke
+          path: shots
+          retention-days: 7

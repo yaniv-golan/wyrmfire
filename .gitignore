@@ -1,0 +1,11 @@
+build/
+generated/
+*.wad
+*.WAD
+*.vdk
+*.bin
+*.mp4
+__pycache__/
+node_modules/
+.cache/
+!bin/wyrmfire.bin

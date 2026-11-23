@@ -1,0 +1,30 @@
+name: Freedoom IWADs
+description: Download Freedoom (BSD-3-Clause) at the version and SHA-256 pinned in tools/versions.env. Never committed.
+outputs:
+  dir:
+    description: Directory holding freedoom1.wad and freedoom2.wad
+    value: ${{ steps.fetch.outputs.dir }}
+runs:
+  using: composite
+  steps:
+    - name: Cache Freedoom
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/wyrmfire-freedoom
+        key: freedoom-${{ hashFiles('tools/versions.env') }}
+    - name: Fetch and verify
+      id: fetch
+      shell: bash
+      run: |
+        set -euo pipefail
+        . tools/versions.env
+        dir="$HOME/.cache/wyrmfire-freedoom"; mkdir -p "$dir"
+        if [ ! -f "$dir/freedoom1.wad" ]; then
+          curl -fsSL --retry 4 -o "$dir/freedoom.zip" "$FREEDOOM_URL"
+          echo "$FREEDOOM_ZIP_SHA256  $dir/freedoom.zip" | sha256sum -c -
+          unzip -j -o -q "$dir/freedoom.zip" '*/freedoom1.wad' '*/freedoom2.wad' -d "$dir"
+          rm "$dir/freedoom.zip"
+        fi
+        echo "$FREEDOOM1_WAD_SHA256  $dir/freedoom1.wad" | sha256sum -c -
+        echo "$FREEDOOM2_WAD_SHA256  $dir/freedoom2.wad" | sha256sum -c -
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,346 @@
+/* WYRMFIRE: standalone 6809 first-person engine for the Dragon 64.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * The binary holds engine code and engine-owned data (font, math tables).
+ * Levels, sprites, music and sounds are read from the level disk. */
+typedef unsigned char byte;
+typedef signed char sb;
+typedef unsigned int word;
+#include "disk.h"
+#include "tables.h"
+#include "font.h"
+#define IO(a) (*(byte*)(a))
+#define GRID ((byte*)0xac00)
+typedef struct {byte x,y,kind,hp;} Thing;
+static Thing things[MAX_OBJECTS];
+static byte shells,ownedShotgun,armor,targetDepth;
+static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown;
+static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
+static word px,py; /* high byte = map cell, low byte = fraction */
+static const sb *vx,*vy;
+static byte *back,*origin;
+static byte fx;
+static const byte *source;
+static word length;static byte *unpackTarget;
+static byte phase[64],movingDoor,rise;
+static void animateDoor(){byte i;if(!movingDoor)return;rise=++phase[movingDoor];if(rise==7)for(i=0;i<PACK[10];i++)if(doorGroups[i]==movingDoor)GRID[doorCells[i]]&=15;if(rise>=8)movingDoor=0;}
+static byte loadArea(byte zone);static byte areaAt(byte x,byte y);
+
+static asm void decompress(){
+ asm {
+    pshs u,y
+    ldx _source
+    ldy _unpackTarget
+@n  cmpy _length
+    bhs @done
+    ldb ,x+
+    bmi @match
+    incb
+@l  lda ,x+
+    sta ,y+
+    decb
+    bne @l
+    bra @n
+@match andb #127
+    addb #3
+    pshs b
+    ldd ,x++
+    leau d,y
+    puls b
+@m  lda ,u+
+    sta ,y+
+    decb
+    bne @m
+    bra @n
+@done puls y,u,pc
+ }
+}
+static void startLevel(){
+ word i;const byte *p=levelObjects;
+ 
+ unpackTarget=GRID;source=packedGrid;length=0xac00+(*(word *)(PACK+4));decompress();
+ count=PACK[6];
+ for(i=0;i<count;i++){Thing *o=things+i;o->x=*p++;o->y=*p++;o->kind=*p++;o->hp=o->kind==5?12:o->kind>=3?4:2;}
+ px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
+ movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;
+}
+static byte shading;
+static byte dirtyCols[2][32],page;
+static byte *blitDest;
+static byte blitRows,blitWidth;
+static asm void blit(){
+ asm {
+    pshs u,y
+    ldx _source
+    ldy _blitDest
+@row ldu #0
+    ldb _blitWidth
+@pixel lda ,y
+    anda ,x+
+    ora ,x+
+    sta ,y+
+    decb
+    bne @pixel
+    ldb #32
+    subb _blitWidth
+    leay b,y
+    dec _blitRows
+    bne @row
+    puls y,u,pc
+ }
+}
+static void sprite(const byte *shape,byte col0,byte row,byte w,byte h){
+ byte j;if(row>=160 || col0+w>32)return;
+ source=shape;blitDest=back+((word)row<<5)+col0;blitWidth=w;blitRows=row+h>160?160-row:h;
+ for(j=0;j<w;j++)dirtyCols[page][col0+j]=1;
+ blit();
+}
+static void text(byte x,byte y,const char *s){
+ byte *p=back+((word)y<<5)+x;while(*s){word glyph=(word)*s++-32;const byte *g=font+(glyph<<3)+glyph;byte i;for(i=0;i<9;i++)p[(word)i<<5]=g[i];p++;}
+}
+static void number(byte x,byte y,byte n){
+ char digits[4];digits[0]='0'+n/100;digits[1]='0'+(n/10)%10;digits[2]='0'+n%10;digits[3]=0;text(x,y,digits);
+}
+static const byte *audioPos,*audioEnd;
+static void sound(byte i){audioPos=ASSET(i);audioEnd=audioPos+ASSET_LEN(i);}
+/* At most four DAC samples per call. Renderer work and input continue while
+ * the effect is active. No call holds the CPU for the length of a gunshot. */
+static asm void audioSlice(){
+ asm {
+    ldx _audioPos
+    beq @done
+    ldb #4
+@next lda ,x+
+    sta $ff20
+    lda #7
+@delay deca
+    bne @delay
+    cmpx _audioEnd
+    bhs @stop
+    decb
+    bne @next
+    stx _audioPos
+    rts
+@stop clra
+    clrb
+    std _audioPos
+    lda #128
+    sta $ff20
+@done rts
+ }
+}
+/* MUS time units are 1/140 second. Render one part on the physical DAC.
+ * Read the keys between events so a player can skip the cue. */
+static byte musicOn=1;
+static void tune(const byte *score){
+ if(!musicOn)return;
+ while(score[2]){
+    word inc=((word)score[0]<<8)+score[1];byte ticks=score[2];score+=3;
+    IO(0xff02)=254;if(!(IO(0xff00)&64))break;
+    while(ticks--){
+     asm {
+       pshs y,u
+       ldx #57
+@wave  ldd <$98
+       addd :inc
+       std <$98
+       lsra
+       lsra
+       adda #96
+       sta $ff20
+       ldb #15
+@wait  decb
+       bne @wait
+       leax -1,x
+       bne @wave
+       puls y,u
+     }
+    }
+ }
+ IO(0xff20)=128;
+}
+static byte key(byte coln,byte row){IO(0xff02)=~(1<<coln);return !(IO(0xff00)&row);}
+static byte *at(byte x,byte y){return GRID+((word)y<<7)+x;}
+static byte cross(byte x,byte y,byte nx,byte ny){
+ byte *a=at(x,y),*b=at(nx,ny);
+ if(*b&16)return 0;
+ if(nx!=x)return *a&(nx>x?1:2);
+ if(ny!=y)return *a&(ny>y?4:8);
+ return 1;
+}
+static void move(int dir){
+ int sx=cosine[angle]*dir,sy=cosine[(angle+24)&31]*dir;
+ word x=px+sx,y=py+sy;
+ if(cross(px>>8,py>>8,x>>8,py>>8)&&loadArea(areaAt(x>>8,py>>8)))px=x;
+ if(cross(px>>8,py>>8,px>>8,y>>8)&&loadArea(areaAt(px>>8,y>>8)))py=y;
+}
+static void cue(byte finish){
+ byte *visible=back==(byte*)0xe000?(byte*)0x400:(byte*)0xe000;
+ byte *hidden=back;byte i;back=visible;
+ for(i=64;i<104;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
+ text(7,72,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
+ text(7,87,"ENTER SKIPS MUSIC");
+ tune(finish?victoryNotes:interNotes);
+ back=hidden;for(i=0;i<32;i++){dirtyCols[0][i]=1;dirtyCols[1][i]=1;}
+}
+static void use(){
+ byte x=px>>8,y=py>>8;int j;
+ for(j=0;j<=3;j++){
+ byte nx=(px+cosine[angle]*j*4)>>8,ny=(py+cosine[(angle+24)&31]*j*4)>>8;
+ byte *b=at(nx,ny);
+ if(*b&32){won=1;cue(1);return;}
+ if(*b&16){byte lock=*b>>6;if(lock && !(keys&(1<<(lock-1))))return;{byte i;if(movingDoor)return;for(i=0;i<PACK[10];i++)if(doorCells[i]==(word)(b-GRID)){movingDoor=doorGroups[i];phase[movingDoor]=1;rise=1;break;}}sound(SND_DOOR);return;}
+ if(!cross(x,y,nx,y)||!cross(nx,y,nx,ny))return;
+ x=nx;y=ny;
+ }
+}
+static byte target,nearby[MAX_OBJECTS],nearCount;
+static asm void findNearby(){
+ asm {
+    pshs u,y
+    ldx #_things
+    ldy #_nearby
+    clr _nearCount
+    clrb
+@loop cmpb _count
+    bhs @done
+    tst 2,x
+    beq @next
+    lda ,x
+    suba _px
+    adda #18
+    cmpa #36
+    bhi @next
+    lda 1,x
+    suba _py
+    adda #18
+    cmpa #36
+    bhi @next
+    stb ,y+
+    inc _nearCount
+@next leax 4,x
+    incb
+    bra @loop
+@done puls y,u,pc
+ }
+}
+#include "combat.h"
+static void actors(){
+ byte i,n;int near=127;target=255;
+ for(n=0;n<nearCount;n++){
+    i=nearby[n];aimColumn[i]=255;
+    Thing *o=things+i;int x,y,z,horiz,sx,depth;
+    if(!o->kind)continue;
+    x=(int)o->x-(px>>8);y=(int)o->y-(py>>8);
+    if(o->kind>=6 && x==0 && y==0){
+       if(o->kind==6)ammo=ammo>180?200:ammo+20;
+       if(o->kind==7)health=health>75?100:health+25;
+       if(o->kind==8){gun=1;ownedShotgun=1;shells=shells>46?50:shells+4;}
+       if(o->kind>=9&&o->kind<=11)keys|=1<<(o->kind-9);
+       if(o->kind==12)shells=shells>46?50:shells+4;
+       if(o->kind==13)armor=100;
+       if(o->kind==14 && health<200)health++;
+       if(o->kind==15 && armor<200)armor++;
+       o->kind=0;sound(SND_PICKUP);continue;
+    }
+    if(x>18||x< -18||y>18||y< -18)continue;
+    z=x*cosine[angle]+y*cosine[(angle+24)&31];if(z<18)continue;
+    horiz=x*cosine[(angle+24)&31]-y*cosine[angle];if(horiz>z||horiz< -z)continue;
+    sx=16+horiz*20/z;if(sx<1||sx>30)continue;
+    depth=(z+3)>>3;if(depth>rayDistance[sx]+2)continue;
+    if(o->kind>=6){byte *p=back+(word)(82+heights[depth]/2)*32+sx;*p=60;p[32]=126;p[64]=60;dirtyCols[page][sx]=1;continue;}
+    sprite(o->kind==5?boss:wind[i]?impCast:o->kind>=3?imp:guard,sx-1,70+heights[depth]/3,2,24);
+    if(sx>=13&&sx<=19&&z<near*32){target=i;targetDepth=depth;near=(z+31)>>5;}
+    aimColumn[i]=sx;aimDepth[i]=depth;
+
+ }
+}
+static byte oldHP[2],oldAmmo[2],oldKeys[2],oldLevel[2],valid[2];
+#include "floppy.h"
+#include "scene.h"
+static void draw(){
+ byte i;scene();
+ actors();missiles();sprite(gun==2?fist:flashTime?flash:gun?shotgun:weapon,14,124,5,36);
+ i=(back==(byte*)0xe000);
+ if(!valid[i]){
+   byte j;for(j=0;j<32;j++)back[5120+j]=255;
+   text(1,164,"AMMO");text(9,164,"HEALTH");text(19,164,"KEY");text(25,164,"MAP");
+ }
+ {byte readyAmmo=gun==2?0:gun?shells:ammo;if(!valid[i]||readyAmmo!=oldAmmo[i]){number(1,177,readyAmmo);oldAmmo[i]=readyAmmo;}}
+ if(!valid[i]||health!=oldHP[i]){byte y;const byte *f=health<45?wounded:marine;byte *d=back+32*163+16;
+    number(9,177,health);for(y=0;y<25;y++){d[0]=*f++;d[1]=*f++;d[2]=*f++;d+=32;}oldHP[i]=health;}
+ if(!valid[i]||keys!=oldKeys[i]){number(19,177,keys);oldKeys[i]=keys;}
+ if(!valid[i]||level!=oldLevel[i]){number(25,177,level+1);oldLevel[i]=level;}
+ valid[i]=1;
+ if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
+ if(won){text(5,76,"LEVEL CLEAR. ENTER");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
+ if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
+ else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
+ IO(0x200)++;IO(0x201)=angle;IO(0x202)=px>>8;IO(0x203)=py>>8;IO(0x204)=health;IO(0x205)=ammo;IO(0x206)=level;IO(0x207)=kills;
+}
+static void clearScreen(byte *p){
+ word i;for(i=0;i<6144;i++)p[i]=0;
+}
+/* Read and verify the HGA1 asset block. */
+static byte loadAssets(){
+ word n,sum;const byte *p;
+ if(!diskRead(ASSET_SECTOR,ASSET_SECTORS,ASSETS))return 0;
+ if(ASSETS[0]!=72||ASSETS[1]!=71||ASSETS[2]!=65||ASSETS[3]!=49)return 0;
+ n=*(word *)(ASSETS+4);if(n>ASSET_BYTES||n<8+4*ASSET_COUNT)return 0;
+ sum=0;for(p=ASSETS+8;p!=ASSETS+n;p++)sum+=*p;
+ return sum==*(word *)(ASSETS+6);
+}
+static void waitForDisk(){text(4,82,"INSERT LEVEL DISK / ENTER");while(!key(0,64)){}}
+static void readLevel(){
+ byte j;
+ currentArea=0;
+ for(j=0;j<MAX_OBJECTS;j++){wind[j]=0;waitForAttack[j]=0;}
+ for(j=0;j<4;j++)balls[j].life=0;
+ while(!loadAssets())waitForDisk();
+ while(!diskRead(PACK_SECTOR,PACK_SECTORS,PACK)||PACK[0]!=72||PACK[1]!=71||PACK[2]!=82||PACK[3]!=50)waitForDisk();
+ startLevel();
+ while(!loadArea(areaAt(px>>8,py>>8)))waitForDisk();
+ }
+int main(){
+ byte i,wasUse=0,wasD=0;
+ IO(0xff23)=0x38;IO(0xff22)|=248;IO(0xff23)=0x3c;IO(0xff22)|=248;
+ IO(0xff21)=0x30;IO(0xff20)=0xfc;IO(0xff21)=0x34;IO(0xff20)=128;
+ IO(0xffc1)=0;IO(0xffc3)=0;IO(0xffc5)=0;IO(0xffc6)=0;IO(0xffc9)=0;
+ IO(0xffca)=0;IO(0xffcc)=0;IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;
+ IO(0xff03)=0x30;IO(0xff02)=255;IO(0xff03)=0x34;IO(0xff01)=0x30;IO(0xff00)=0;IO(0xff01)=0x34;
+ clearScreen((byte*)0x400);clearScreen((byte*)0xe000);back=(byte*)0xe000;
+ health=100;ammo=50;
+ back=(byte*)0x400;text(8,82,"READING LEVEL DISK");
+ while(!loadAssets())waitForDisk();
+ clearScreen(back);text(12,74,"WYRMFIRE");text(8,92,"ENTER SKIPS MUSIC");tune(introNotes);
+ clearScreen(back);text(8,82,"READING LEVEL DISK");
+ readLevel();
+ clearScreen(back);back=(byte*)0xe000;
+ for(;;){
+    byte useNow=key(5,4),dKey=key(4,4);if(dKey&&!wasD)shading=!shading;wasD=dKey;turn++;
+    if(won||!health){if(key(0,64)){if(won)level=0;won=0;gun=0;armor=0;shells=0;ownedShotgun=0;health=100;ammo=50;readLevel();}}
+    else{
+      if(key(5,32))angle=(angle+1)&31;if(key(6,32))angle=(angle+31)&31;
+      if(key(1,1))gun=2;if(key(2,1)&&ammo)gun=0;if(key(3,1)&&shells&&ownedShotgun)gun=1;
+      if(key(2,32)||key(0,32)){byte old=angle;angle=(angle+(key(2,32)?8:24))&31;move(2);angle=old;}
+      if(key(3,32))move(2);if(key(4,32))move(-2);
+      animateDoor();
+      if(useNow&&!wasUse)use();
+      if(flashTime)flashTime--;if(cooldown)cooldown--;
+    }
+    wasUse=useNow;if(health&&!won)simulate();draw();
+    if(health&&!won&&key(7,32)&&!cooldown){
+       if(gun==1&&!shells)gun=ammo?0:2;
+       if(!gun&&!ammo)gun=ownedShotgun&&shells?1:2;
+       if(!gun)ammo--;if(gun==1)shells--;
+       flashTime=2;cooldown=gun==1?4:3;
+       if(gun==1)shotgunAttack();
+       else if(target!=255 && (gun!=2||targetDepth<=7)){
+          Thing *t=things+target;byte damage=gun==1?4:2;
+          if(t->hp<=damage){t->kind=t->kind==1?6:t->kind==2?8:0;kills++;}else t->hp-=damage;
+       }
+       if(gun==0)sound(SND_FIRE);
+       else if(gun==1)sound(SND_BLAST);
+    }
+ }
+ return 0;
+}

@@ -1,0 +1,8 @@
+{
+ "freedoom": "0.13.0",
+ "wad": "freedoom1.wad",
+ "map": "E1M1",
+ "why": "Freedoom's first map; fits HGR2 (see docs/FREEDOOM-FIT.md).",
+ "vdk": "wyrmfire-freedoom-e1m1.vdk",
+ "sha256": "b302593b5964dd27a4a4b7677347970fa17ff8eabcf8452d11dab0a28fd5c10e"
+}
