@@ -31,7 +31,8 @@ compared) and, for stalls, in CLOADM with the committed engine.
 | Header | 2,795 bytes | 3,072 |
 | Asset block | 6,081 bytes | 7,680 |
 
-E1M1 is the release level disk (`release/expected.json`).
+E1M1 is the reference level disk (`release/expected.json`); it is built by
+CI and by players, never shipped.
 
 ## Region-crossing stalls (E1M1, CLOADM, committed engine)
 
@@ -50,9 +51,11 @@ E1M1 is the release level disk (`release/expected.json`).
 E3M8; E3M7 reaches only 4 cells) and 3 of the 32 phase 2 maps (MAP01, MAP30,
 MAP31). The rest exceed the object count (most often), the 3,072-byte
 header, the disk, the 255-region index, the 104 rows or the 128 columns.
-Three phase 1 maps put the player start on a cell the inside/outside test
-rejects (E1M2, E4M4, E4M6), a converter limitation with overlapping
-one-sided lines.
+E1M2, E4M4 and E4M6 used to stop earlier with "player start lies outside
+the playable map": their start sits on a cell edge whose own cell centre
+samples as outside. The converter now moves the start to the playable
+neighbouring cell nearest to it; all three then exceed the object count
+(E4M4 and E4M6 also the disk and the header).
 
 ## Known limit: Doom II-format IWADs
 
