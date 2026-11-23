@@ -99,6 +99,12 @@ def _build(lumps, oy, h):
             for bit, off in ((1, 1), (2, -1), (4, 128), (8, -128)):
                 if not grid[i + off]: grid[i] &= ~bit
     seed = int(cell(*start[:2]))
+    # A start on a cell edge can sample its own cell centre as outside (Freedoom E1M2): take the
+    # playable neighbour whose centre is nearest the start (lowest index on a tie).
+    if 0 <= seed < len(grid) and not grid[seed]:
+        near = [((ox + 32 + 64 * (j % 128) - start[0]) ** 2 + (oy + 32 + 64 * (j // 128) - start[1]) ** 2, j)
+                for j in (seed + o for o in (-129, -128, -127, -1, 1, 127, 128, 129)) if 0 <= j < len(grid) and grid[j]]
+        if near: seed = min(near)[1]
     if not 0 <= seed < len(grid) or not grid[seed]:
         raise ValueError('player start lies outside the playable map')
     reached = {seed}; q = deque([seed])

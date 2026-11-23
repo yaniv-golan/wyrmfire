@@ -445,7 +445,19 @@ function buildGrid(lumps, oy, h) {
   for (let i = 128; i < grid.length - 128; i++) {
     if (grid[i]) for (const [bit, off] of links) if (!grid[i + off]) grid[i] &= ~bit;
   }
-  const seed = Math.trunc(cell(start[0], start[1]));
+  // A start on a cell edge can sample its own cell centre as outside (Freedoom E1M2): take the
+  // playable neighbour whose centre is nearest the start (lowest index on a tie).
+  let seed = Math.trunc(cell(start[0], start[1]));
+  if (seed >= 0 && seed < grid.length && !grid[seed]) {
+    let best = -1, bestD = Infinity;
+    for (const off of [-129, -128, -127, -1, 1, 127, 128, 129]) {
+      const j = seed + off;
+      if (j < 0 || j >= grid.length || !grid[j]) continue;
+      const d = (ox + 32 + 64 * pyMod(j, 128) - start[0]) ** 2 + (oy + 32 + 64 * floorDiv(j, 128) - start[1]) ** 2;
+      if (d < bestD || (d === bestD && j < best)) { bestD = d; best = j; }
+    }
+    if (best >= 0) seed = best;
+  }
   if (!(seed >= 0 && seed < grid.length) || !grid[seed]) throw new WadError('player start lies outside the playable map');
   const reached = new Set([seed]), q = [seed];
   for (let qi = 0; qi < q.length; qi++) {

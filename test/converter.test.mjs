@@ -232,3 +232,33 @@ test('Freedoom E1M1 converts deterministically and round-trips', { skip: !FREEDO
   assert.equal(assets.shotgun.length, 360);
   assert.ok(assets.snd_fire.length > 0 && assets.introNotes.length % 3 === 0);
 });
+
+// ------------------------------------------------------------ player start on a cell edge
+
+test('a player start whose own cell centre samples outside moves to the nearest playable neighbour', () => {
+  const withStart = (x, y) => makeWad([['PLAYPAL', palette()], ...roomLumps().map(([n, d]) =>
+    [n, n === 'THINGS' ? [...[x, y, 90, 1, 7].flatMap(le16), ...d.slice(10)] : d])]);
+  // (250, 128): its cell centre (256, 128) lies on the east wall, the cell west of it is inside.
+  const m = C.buildMap(new C.Wad(withStart(250, 128)).level('MAP01'));
+  assert.deepEqual([m.seed % 128, Math.floor(m.seed / 128)], [4, 3]);
+  assert.ok(m.grid[m.seed]);
+  // Unchanged when the start's own cell is playable; still refused when nothing near it is.
+  assert.equal(C.buildMap(new C.Wad(withStart(128, 128)).level('MAP01')).seed, 3 * 128 + 3);
+  assert.throws(() => C.buildMap(new C.Wad(withStart(600, 600)).level('MAP01')), /player start lies outside the playable map/);
+});
+
+// ------------------------------------------------------------ command line
+
+test('cli: --help prints a short usage, a missing input is one line and exit 2', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const cli = new URL('../converter/cli.mjs', import.meta.url).pathname;
+  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  const lines = help.stdout.trim().split('\n');
+  assert.ok(lines.length >= 2 && lines.length <= 6, help.stdout);
+  assert.match(lines[0], /^usage: /);
+  const missing = spawnSync(process.execPath, [cli, 'no-such-file.wad', '--map', 'E1M1'], { encoding: 'utf8' });
+  assert.equal(missing.status, 2);
+  assert.equal(missing.stderr, 'cli.mjs: cannot read no-such-file.wad: no such file\n');
+  assert.equal(missing.stdout, '');
+});
