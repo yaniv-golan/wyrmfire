@@ -16,8 +16,12 @@ static byte clearLine(byte x,byte y,byte tx,byte ty){
  return 1;
 }
 static void hurt(byte n){
+ byte before=health;
  if(armor){armor--;if(n>1)n--;}
  health=health>n?health-n:0;
+ /* Feedback only when damage landed: armor that ate the whole hit is not a wound, so it makes no sound and
+  * leaves the picture alone. SND_HURT was in the asset block and never played. */
+ if(health<before){sound(SND_HURT);hurtFlash=2;}
 }
 static void releaseBall(const Thing *o){
  byte j;for(j=0;j<4;j++)if(!balls[j].life){

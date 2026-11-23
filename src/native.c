@@ -13,7 +13,7 @@ typedef unsigned int word;
 typedef struct {byte x,y,kind,hp;} Thing;
 static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
-static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown;
+static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
 static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
 static word px,py; /* high byte = map cell, low byte = fraction */
 static const sb *vx,*vy;
@@ -61,7 +61,7 @@ static void startLevel(){
  count=PACK[6];
  for(i=0;i<count;i++){Thing *o=things+i;o->x=*p++;o->y=*p++;o->kind=*p++;o->hp=o->kind==5?12:o->kind>=3?4:2;}
  px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
- movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;
+ movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte shading;
 static byte dirtyCols[2][32],page;
@@ -273,6 +273,10 @@ static void draw(){
  valid[i]=1;
  if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
  if(won){text(5,76,"LEVEL CLEAR. ENTER");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
+ /* ONE-PICTURE BORDER FLASH when a hit lands: the VDG's colour set is inverted for the frame the hit is drawn in
+  * (CSS, $FF22 bit 3, which the engine leaves set to 1), then put back on the next draw. No memory moves, so it
+  * costs the player nothing; hurtFlash is set by hurt() and counted down once a frame. */
+ if(hurtFlash){IO(0xff22)&=247;}else{IO(0xff22)|=8;}
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
  else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
  IO(0x200)++;IO(0x201)=angle;IO(0x202)=px>>8;IO(0x203)=py>>8;IO(0x204)=health;IO(0x205)=ammo;IO(0x206)=level;IO(0x207)=kills;
@@ -325,7 +329,7 @@ int main(){
       if(key(3,32))move(2);if(key(4,32))move(-2);
       animateDoor();
       if(useNow&&!wasUse)use();
-      if(flashTime)flashTime--;if(cooldown)cooldown--;
+      if(flashTime)flashTime--;if(cooldown)cooldown--;if(hurtFlash)hurtFlash--;
     }
     wasUse=useNow;if(health&&!won)simulate();draw();
     if(health&&!won&&key(7,32)&&!cooldown){
