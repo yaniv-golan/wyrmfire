@@ -17,7 +17,18 @@ above. `freedoom1.wad` is in the [Freedoom 0.13.0](https://freedoom.github.io)
 zip. For Freedoom E1M1 (and only that map) the result must have the
 SHA-256 pinned in [`release/expected.json`](release/expected.json).
 
-<!-- media: one screenshot and one short GIF, recorded from the Freedoom E1M1 level disk only, go here -->
+![WYRMFIRE in play: the player walks a Freedoom E1M1 corridor, turning and firing the pistol at monsters while a fireball flies past](docs/media/gameplay.gif)
+
+| | |
+|---|---|
+| ![Freedoom E1M1 just after the spawn: a long corridor with a distant monster, the pistol and the status bar](docs/media/spawn.png) | ![Three monsters across a room of stepped walls](docs/media/zombies.png) |
+| ![A fireball coming at the player from a monster between lit wall columns](docs/media/fireball.png) | ![A hall with a hatched wall and a monster at the far end](docs/media/hall.png) |
+
+*Recorded headless in CLOADM (Dragon 64, PAL, no ROMs) from the Freedoom
+E1M1 level disk. Level, sprites and sounds: [Freedoom](https://freedoom.github.io)
+0.13.0, © Contributors to the Freedoom project, BSD-3-Clause
+([LICENSES/freedoom.txt](LICENSES/freedoom.txt)). The GIF plays at the
+emulated machine's real frame rate. To regenerate: [README media](#readme-media).*
 
 ## Running
 
@@ -86,9 +97,9 @@ or in Node.
 | `bin/wyrmfire.bin` | The committed engine binary; CI rebuilds it and requires a byte-identical match |
 | `converter/` | `wyrmfire-convert.js` (dependency-free ES module), `worker.js` (Web Worker), `cli.mjs` |
 | `tools/reference/` | Python reference converter; the JS output must equal it byte for byte |
-| `tools/` | `build-engine.sh`, `pack.py` (engine packer), `mkfont.mjs`, `fit-report.mjs`, `make-release.mjs`, pinned `versions.env` |
+| `tools/` | `build-engine.sh`, `pack.py` (engine packer), `mkfont.mjs`, `fit-report.mjs`, `make-release.mjs`, `readme-media.cjs` (README media), pinned `versions.env` |
 | `test/` | Converter unit tests, JS/Python parity, CLOADM smoke test, emulator harnesses (`test/harness/`) |
-| `docs/` | Formats, RAM map and the Freedoom fit report |
+| `docs/` | Formats, RAM map and the Freedoom fit report; `docs/media/` holds the README screenshots and GIF (Freedoom E1M1) |
 
 ## Building the engine
 
@@ -137,6 +148,26 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
 
 Level disks converted from id Software WADs stay on your machine: never
 commit or upload them.
+
+## README media
+
+The screenshots and the GIF in [`docs/media/`](docs/media) are recorded by
+[`tools/readme-media.cjs`](tools/readme-media.cjs), headless in CLOADM at the
+`CLOADM_COMMIT` pinned in `.github/workflows/ci.yml`, on CLOADM's built-in
+firmware (no BASIC or DOS ROM), with the committed `bin/wyrmfire.bin`:
+
+    node tools/readme-media.cjs cloadm freedoom1.wad          # -> docs/media/*.png, docs/media/gameplay.gif
+
+It accepts only the pinned Freedoom 0.13.0 `freedoom1.wad` (SHA-256 in
+[`tools/versions.env`](tools/versions.env)) and requires the converted E1M1
+disk to match [`release/expected.json`](release/expected.json); the disk lives
+in a temporary directory and is deleted afterwards. The player is driven by
+the same grid autopilot as the route harness, and time is counted in emulated
+PAL fields, so a rerun gives byte-identical files (it prints their SHA-256).
+The shots are taken at fixed picture numbers and the GIF covers 7.9 s from a
+fixed picture (`SHOTS`, `GIF_FROM` and `GIF_SECONDS` at the top of the
+script); after an engine change, check the pictures still show what their alt
+text says.
 
 ## Releases
 
