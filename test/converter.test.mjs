@@ -235,23 +235,32 @@ test('Freedoom E1M1 converts deterministically and round-trips', { skip: !FREEDO
 
 // ------------------------------------------------------------ player start on a cell edge
 
-// Axis-aligned rooms as closed one-sided loops; only the lumps buildMap reads.
-function roomsLevel(rects, [x, y]) {
+// Rooms as closed one-sided loops (a rectangle [x0, y0, x1, y1] or a polygon [[x, y], ...]), plus
+// optional two-sided lines [x0, y0, x1, y1, flags]; only the lumps buildMap reads.
+function roomsLevel(shapes, [x, y], inner = []) {
   const v = [], lines = [];
-  for (const [x0, y0, x1, y1] of rects) {
-    const k = v.length; v.push([x0, y0], [x0, y1], [x1, y1], [x1, y0]);
-    for (let i = 0; i < 4; i++) lines.push([k + i, k + (i + 1) % 4]);
+  for (const sh of shapes) {
+    const pts = typeof sh[0] === 'number' ? [[sh[0], sh[1]], [sh[0], sh[3]], [sh[2], sh[3]], [sh[2], sh[1]]] : sh;
+    const k = v.length; v.push(...pts);
+    pts.forEach((_, i) => lines.push([k + i, k + (i + 1) % pts.length, 1, 65535]));
   }
+  for (const [x0, y0, x1, y1, flags] of inner) { const k = v.length; v.push([x0, y0], [x1, y1]); lines.push([k, k + 1, flags, 0]); }
   return {
     THINGS: Uint8Array.from([x, y, 90, 1, 7].flatMap(le16)),
-    LINEDEFS: Uint8Array.from(lines.flatMap(([a, b]) => [a, b, 1, 0, 0, 0, 65535].flatMap(le16))),
-    SIDEDEFS: Uint8Array.from(lines.flatMap(() => [...le16(0), ...le16(0), ...name8('-'), ...name8('-'), ...name8('STARTAN3'), ...le16(0)])),
+    LINEDEFS: Uint8Array.from(lines.flatMap(([a, b, flags, left]) => [a, b, flags, 0, 0, 0, left].flatMap(le16))),
+    SIDEDEFS: Uint8Array.from([...le16(0), ...le16(0), ...name8('-'), ...name8('-'), ...name8('STARTAN3'), ...le16(0)]),
     VERTEXES: Uint8Array.from(v.flatMap(([px, py]) => [...le16(px), ...le16(py)])),
   };
 }
 const SQUARE = [0, 0, 256, 256]; // cell centres at -64 + 64k; 0 inside, 256 outside
-const seedOf = (rects, start) => { const m = C.buildMap(roomsLevel(rects, start)); assert.ok(m.grid[m.seed]); return [m.seed % 128, Math.floor(m.seed / 128)]; };
-const refused = (rects, start) => assert.throws(() => C.buildMap(roomsLevel(rects, start)), /player start lies outside the playable map/);
+// Every case also runs through the Python reference (tools/reference/levelmap.py) when python3 is
+// available, so a change to the fallback in only one of the two converters fails here.
+const START_CASES = [];
+function jsStart(shapes, start, inner) {
+  try { const m = C.buildMap(roomsLevel(shapes, start, inner)); assert.ok(m.grid[m.seed]); return [m.seed % 128, Math.floor(m.seed / 128)]; } catch (e) { return e.message; }
+}
+const seedOf = (shapes, start, inner = []) => { START_CASES.push([shapes, start, inner]); const r = jsStart(shapes, start, inner); assert.ok(Array.isArray(r), r); return r; };
+const refused = (shapes, start, inner = []) => { START_CASES.push([shapes, start, inner]); assert.equal(jsStart(shapes, start, inner), 'player start lies outside the playable map'); };
 
 test('a player start whose own cell centre samples outside moves to the nearest playable neighbour', () => {
   // (250, 128): its cell centre (256, 128) lies on the east wall; the cell west of it is inside.
@@ -277,10 +286,49 @@ test('edge-start fallback never steps across a one-sided line', () => {
   // A sliver room (272-300) holds no cell centre; the big room's cell is across both walls.
   refused([SQUARE, [272, 0, 300, 256]], [286, 128]);
   // Beside a void gap (256-320): the west room is across its wall, and the east room's nearest
-  // centres lie exactly on its west wall; touching a wall counts, so neither is taken.
+  // centres lie exactly on its west wall; a step that ends on a wall is refused.
   refused([SQUARE, [320, 0, 576, 256]], [260, 128]);
   // A narrow side room next to the main one: its nearest playable centre is across both walls.
   refused([SQUARE, [258, 0, 270, 192]], [264, 96]);
+});
+
+test('edge-start fallback: touching a wall counts as crossing it', () => {
+  // The start itself lies on the east wall: every step from it touches that wall.
+  refused([SQUARE], [256, 128]);
+  // A triangular pillar whose apex (220, 128) lies on the step from (250, 128) to (192, 128):
+  // (4,3) is refused, so the nearest clear neighbours (4,2) and (4,4) tie and (4,2) wins.
+  assert.deepEqual(seedOf([SQUARE, [[220, 128], [226, 150], [214, 150]]], [250, 128]), [4, 2]);
+  // A pillar edge lying along the same step (collinear overlap) blocks it the same way.
+  assert.deepEqual(seedOf([SQUARE, [200, 128, 220, 160]], [250, 128]), [4, 2]);
+});
+
+test('edge-start fallback never steps across a two-sided impassable line', () => {
+  // An impassable (flags 1) two-sided line at x = 224 between the start and every inside neighbour.
+  refused([SQUARE], [250, 128], [[224, 0, 224, 256, 1]]);
+  // The same line without the impassable flag does not block the step.
+  assert.deepEqual(seedOf([SQUARE], [250, 128], [[224, 0, 224, 256, 0]]), [4, 3]);
+});
+
+test('edge-start cases: the Python reference converter agrees', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const ref = new URL('../tools/reference/', import.meta.url).pathname;
+  const probe = spawnSync('python3', ['-c', 'pass']);
+  if (probe.error || probe.status !== 0) { t.skip('python3 not available'); return; }
+  assert.ok(START_CASES.length >= 14, `only ${START_CASES.length} cases collected`);
+  const lumps = START_CASES.map(([shapes, start, inner]) => Object.fromEntries(Object.entries(roomsLevel(shapes, start, inner)).map(([k, v]) => [k, [...v]])));
+  const py = spawnSync('python3', ['-I', '-c', `import sys, json
+sys.path.insert(0, sys.argv[1])
+import levelmap
+out = []
+for L in json.load(sys.stdin):
+    try:
+        m = levelmap.build_map({k: bytes(v) for k, v in L.items()})
+        out.append([m['seed'] % 128, m['seed'] // 128])
+    except ValueError as e:
+        out.append(str(e))
+print(json.dumps(out))`, ref], { input: JSON.stringify(lumps), encoding: 'utf8' });
+  assert.equal(py.status, 0, py.stderr);
+  assert.deepEqual(JSON.parse(py.stdout), START_CASES.map(([shapes, start, inner]) => jsStart(shapes, start, inner)));
 });
 
 // ------------------------------------------------------------ command line
