@@ -19,10 +19,14 @@ start   orcc #$50
 clrscr  std ,x++
         cmpx #$0600
         bcs clrscr              ; clear $0400..$05FF exactly; bls would run one store past the end
-* The controls, on the screen while the level unpacks. The VDG starts in a GRAPHICS mode (AG=0), and the engine
-* only switches to its text mode later, so set alphanumeric internal here to be able to write cells at all: $FF22
-* bit 7 (AG) and V2..V0 = 111. The three SAM stores above already turned all-RAM on.
-        lda #$FD
+* The controls, on the screen while the level unpacks. Alphanumeric INTERNAL is $00 on $FF22: bit 7 (AG) clear
+* selects text on the MC6847, and bit 4 (INTEXT) clear is the chip's own font. $FD, which this used to write, has
+* bit 7 SET -- that is the highest-resolution GRAPHICS mode (AG=1, GM7), so the whole screen painted as an empty
+* colour field and a player saw nothing at all while the level unpacked. The cells were written either way; the
+* mode was what kept them off the screen (measured: $FD renders 0 ink pixels in the text rows, $00 renders all
+* 25 cells as the glyphs the chip's font gives). The SAM already has the display at $0400 (its boot value), and
+* the three stores above already turned all-RAM on.
+        lda #$00
         sta $ff22
 * The 32x16 text page at $0400 holds one byte a cell. Space is $60 in this VDG's internal font.
         ldx #$0400
