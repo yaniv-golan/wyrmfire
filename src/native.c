@@ -97,6 +97,12 @@ static void sprite(const byte *shape,byte col0,byte row,byte w,byte h){
 static void text(byte x,byte y,const char *s){
  byte *p=back+((word)y<<5)+x;while(*s){word glyph=(word)*s++-32;const byte *g=font+(glyph<<3)+glyph;byte i;for(i=0;i<9;i++)p[(word)i<<5]=g[i];p++;}
 }
+/* The KEY field of the HUD: one glyph per key slot -- '1' '2' '3' for the keys held and '-' for those not, so a
+ * player sees WHICH keys are in hand. It used to print the bitmask as a decimal, so holding keys 1 and 2 showed "3". */
+static void keysHud(byte x,byte y,byte k){
+ byte i;char one[2];
+ for(i=0;i<3;i++){one[0]=(k&(1<<i))?'1'+i:'-';one[1]=0;text(x+i,y,one);}
+}
 static void number(byte x,byte y,byte n){
  char digits[4];digits[0]='0'+n/100;digits[1]='0'+(n/10)%10;digits[2]='0'+n%10;digits[3]=0;text(x,y,digits);
 }
@@ -268,7 +274,7 @@ static void draw(){
  {byte readyAmmo=gun==2?0:gun?shells:ammo;if(!valid[i]||readyAmmo!=oldAmmo[i]){number(1,177,readyAmmo);oldAmmo[i]=readyAmmo;}}
  if(!valid[i]||health!=oldHP[i]){byte y;const byte *f=health<45?wounded:marine;byte *d=back+32*163+16;
     number(9,177,health);for(y=0;y<25;y++){d[0]=*f++;d[1]=*f++;d[2]=*f++;d+=32;}oldHP[i]=health;}
- if(!valid[i]||keys!=oldKeys[i]){number(19,177,keys);oldKeys[i]=keys;}
+ if(!valid[i]||keys!=oldKeys[i]){keysHud(19,177,keys);oldKeys[i]=keys;}
  if(!valid[i]||level!=oldLevel[i]){number(25,177,level+1);oldLevel[i]=level;}
  valid[i]=1;
  if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
