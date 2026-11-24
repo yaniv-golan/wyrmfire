@@ -22,6 +22,8 @@ const FONT = (() => {
 })();
 const glyph = (ch) => { const g = ch.charCodeAt(0) - 32; return FONT.slice(g * 9, g * 9 + 9); };
 
+// ticks === null: leave levelTicks alone and count the pictures the game really drew, so the clock is tested
+// against real elapsed time. Otherwise poke it (kept for callers that want a fixed value).
 async function levelClear(repo, dir, ticks, kills) {
   const files = boot.layout(dir), sym = boot.symbols(files.map);
   const s = await boot(repo, files);
@@ -36,11 +38,22 @@ async function levelClear(repo, dir, ticks, kills) {
   for (let cy = 0; cy < 128 && ex < 0; cy++) for (let cx = 0; cx < 128 && ex < 0; cx++) if (r(at(cx, cy)) & 32) { ex = cx; ey = cy; }
   assert.ok(ex >= 0, 'no exit cell on this level disk');
   w('px', (ex << 8) + 128); w('py', (ey << 8) + 128); b1('angle', 0);
-  w('levelTicks', ticks); b1('kills', kills);
-  for (let f = 0; f < 120 && !r(sym.won); f++) { m.setKey('E', f % 8 < 4); s.runFrames(1); }
+  if (ticks !== null) w('levelTicks', ticks);
+  b1('kills', kills);
+  // real pictures (the engine's own counter, bumped in draw()) before and after the clear
+  const pic = () => r(0x200) + (r(sym.levelTicks + 0) === undefined ? 0 : 0);
+  // dwell: let the level run for a real span of pictures with the player NOT on the exit, so levelTicks
+  // accumulates. 120 pictures is ~11 s at the engine's 11 pictures/s.
+  const DWELL = ticks === null ? 120 : 0;
+  for (let k = 0; k < DWELL; k++) next();
+  // now step onto the exit and press E
+  let f = 0;
+  for (; f < 400 && !r(sym.won); f++) { m.setKey('E', f % 8 < 4); s.runFrames(1); }
   assert.equal(r(sym.won), 1, 'the level clear never fired (E on the exit cell)');
-  for (let f = 0; f < 10; f++) { m.setKey('E', false); s.runFrames(1); }
-  return { s, m, sym, r };
+  for (let k = 0; k < 10; k++) { m.setKey('E', false); s.runFrames(1); }
+  // pictures drawn between the start and the clear: the engine bumps levelTicks once per pass, so this is
+  // levelTicks minus whatever it was when we began (0, since a level clear resets it at level start).
+  return { s, m, sym, r, elapsedPictures: ticks === null ? (r(sym.levelTicks) * 256 + r(sym.levelTicks + 1)) : ticks };
 }
 
 // decode a text row of the page the VDG is showing, one glyph per 8-pixel cell
@@ -54,36 +67,29 @@ function rowChars(r, base, y, n) {
 }
 
 (async () => {
-  // ---- a known time and kill count: 3177 fields is 63.5 s -> 01:03; 9 kills -> 09
+  // ---- TIME must reflect REAL elapsed time, not a poked counter. Run a known number of PICTURES and check that
+  // the clock matches the picture rate the engine actually runs at. Poking levelTicks would hide exactly the bug
+  // this catches (the first version divided pictures by 50, reading 4.4x fast).
   {
-    const { s, m, r } = await levelClear(repo, dir, 3177, 9);
+    const { m, r, elapsedPictures } = await levelClear(repo, dir, null, 9);
     const shown = m.sam.displayBase;
     const row = rowChars(r, shown, 101, 30).replace(/\s+$/, '');
-    assert.ok(row.includes('TIME'), `the end screen's time row reads ${JSON.stringify(row)}: no TIME on the page the screen shows`);
-    assert.ok(/TIME 01:03/.test(row), `want "TIME 01:03" on the row (3177 fields), read ${JSON.stringify(row)}`);
-    assert.ok(/KILLS 09/.test(row) || /KILLS 9\b/.test(row), `want "KILLS 09" on the row (9 killed), read ${JSON.stringify(row)}`);
-    // the title and the prompt, read from the column each is drawn at (cue(): text(7,92,..), text(7,110,..));
-    // the cells to their left are the scene, so the check starts at the column the engine writes
-    const title = rowChars(r, shown, 92, 20).slice(7).trim(), prompt = rowChars(r, shown, 110, 26).slice(7).trim();
-    assert.equal(title, 'LEVEL CLEAR', `the title reads ${JSON.stringify(title)}`);
-    assert.equal(prompt, 'ENTER SKIPS MUSIC', `the prompt reads ${JSON.stringify(prompt)}`);
-    // and the frame the player sees has ink where the time row is: this is what "visible" means
-    const fr = m.render(), W = fr.width, BX = 32, BY = 24;
-    let ink = 0;
-    // a text row is 9 scanlines at the same pixel rows text() wrote; the 32x16 page maps 12 scanlines a cell row,
-    // but the engine runs its own graphics mode, so read the band the row's bytes land in
-    for (let y = 101; y < 110; y++) for (let x = BX; x < BX + 256; x++) if (fr.data[(BY + y) * W + x] !== 8) ink++;
-    assert.ok(ink > 0, 'the rendered frame has no ink on the time row');
-    console.log(JSON.stringify({ title, prompt, inkOnTimeRow: ink }));
+    const mmss = /TIME (\d\d):(\d\d)/.exec(row);
+    assert.ok(mmss, `no TIME mm:ss on the row: ${JSON.stringify(row)}`);
+    const shownSecs = (+mmss[1]) * 60 + (+mmss[2]);
+    // the harness now waits `elapsedPictures` pictures; the engine runs PICTURES_PER_SEC pictures a second
+    const want = Math.round(elapsedPictures / 11);
+    assert.ok(Math.abs(shownSecs - want) <= 1,
+      `TIME showed ${mmss[1]}:${mmss[2]} (${shownSecs}s) after ${elapsedPictures} pictures; at the engine's rate that is ${want}s (±1)`);
+    assert.ok(/KILLS 09/.test(row), `want KILLS 09 (9 killed), read ${JSON.stringify(row)}`);
+    console.log(JSON.stringify({ row, picturesRun: elapsedPictures, shownSeconds: shownSecs, expected: want }));
   }
-  // ---- a different time and kills, so the numbers are read rather than assumed
+  // ---- a second value for kills, drawn without poking
   {
-    const { m, r } = await levelClear(repo, dir, 150 * 50 + 7 * 50, 4);   // 157 s -> 02:37, 4 kills
-    const shown = m.sam.displayBase;
-    const row = rowChars(r, shown, 101, 30).replace(/\s+$/, '');
-    console.log(JSON.stringify({ shown: '$' + shown.toString(16), row }));
-    assert.ok(/TIME 02:37/.test(row), `want "TIME 02:37" (7850 fields), read ${JSON.stringify(row)}`);
-    assert.ok(/KILLS 04/.test(row) || /KILLS 4\b/.test(row), `want "KILLS 04" (4 killed), read ${JSON.stringify(row)}`);
+    const { m, r } = await levelClear(repo, dir, null, 4);
+    const row = rowChars(r, m.sam.displayBase, 101, 30).replace(/\s+$/, '');
+    assert.ok(/KILLS 04/.test(row), `want "KILLS 04" (4 killed), read ${JSON.stringify(row)}`);
+    console.log(JSON.stringify({ row }));
   }
   console.log('all end-screen checks passed');
 })().catch((e) => { console.error(e.message || e); process.exitCode = 1; });

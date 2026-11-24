@@ -21,7 +21,10 @@ static void hurt(byte n){
  health=health>n?health-n:0;
  /* Feedback only when damage landed: armor that ate the whole hit is not a wound, so it makes no sound and
   * leaves the picture alone. SND_HURT was in the asset block and never played. */
- if(health<before){sound(SND_HURT);hurtFlash=2;}
+ /* ONE picture of flash. The frame order is: simulate() (hurt() runs here) -> draw() (reads hurtFlash and
+  * inverts the colour set) -> next pass, hurtFlash-- runs before simulate(). A value of 2 therefore survives
+  * into the NEXT frame's draw() as 1 and flashes twice; 1 flashes exactly the frame the hit was drawn in. */
+ if(health<before){sound(SND_HURT);hurtFlash=1;}
 }
 static void releaseBall(const Thing *o){
  byte j;for(j=0;j<4;j++)if(!balls[j].life){

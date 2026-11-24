@@ -15,7 +15,11 @@ static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
 static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
 static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
-static word levelTicks;   /* PAL fields since the level started: 50 fields = one second */
+/* Drawn pictures since the level started, and how many of them make a second. A pass of the frame loop draws one
+ * picture and bumps levelTicks, so the unit is pictures, not fields: measured, 45 pictures span 4.00 s of emulated
+ * time on this engine (PAL, 50 fields/s), which is 11.25 pictures a second. */
+static word levelTicks;
+#define PICTURES_PER_SEC 11
 static word px,py; /* high byte = map cell, low byte = fraction */
 static const sb *vx,*vy;
 static byte *back,*origin;
@@ -201,10 +205,16 @@ static void cue(byte finish){
  byte i;   /* `back` is already the hidden page: draw() leaves it pointing away from the screen */
  for(i=96;i<120;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
  text(7,92,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
- /* The level's time and kills. 50 PAL fields a second, so levelTicks/50 is whole seconds; mm:ss is two digits
-  * each and kills two (twodigits), not number()'s three. */
- if(finish){word secs=levelTicks/50;
-   text(7,101,"TIME");twodigits(12,101,(byte)(secs/60));text(14,101,":");
+ /* The level's time and kills. levelTicks counts DRAWN PICTURES, not PAL fields -- it is bumped once per pass of
+  * the frame loop, and a picture costs about 4.4 fields on this engine (measured: 45 pictures in 4.00 s of
+  * emulated time). So the divisor is the picture rate, 50/4.44 ~= 11.25 pictures a second, and PICTURES_PER_SEC
+  * below carries it. Dividing by 50 read the clock about 4.4x fast -- the first version of this did that, and a
+  * 500-field run showed levelTicks at 113, not 500. mm and ss are two digits each (twodigits), not number()'s
+  * three, and the seconds are the total seconds modulo 60 so the wrap to the next minute is right. */
+ if(finish){word secs=levelTicks/PICTURES_PER_SEC,mmins=secs/60;
+   /* the minute field is two digits while mm<100 (99 minutes), and the seconds modulo 60; past 99 minutes the
+    * minute field wraps, which is the same as the game simply being left running */
+   text(7,101,"TIME");twodigits(12,101,(byte)mmins);text(14,101,":");
    twodigits(15,101,(byte)(secs%60));text(19,101,"KILLS");twodigits(25,101,kills);}
  text(7,110,"ENTER SKIPS MUSIC");
  /* show what was just drawn: draw()'s own flip (bit 3 clears the low page, bit 2 the high one) */
@@ -307,6 +317,10 @@ static void draw(){
  /* ONE-PICTURE BORDER FLASH when a hit lands: the VDG's colour set is inverted for the frame the hit is drawn in
   * (CSS, $FF22 bit 3, which the engine leaves set to 1), then put back on the next draw. No memory moves, so it
   * costs the player nothing; hurtFlash is set by hurt() and counted down once a frame. */
+ /* CSS is bit 3 of PIA1 port B. It must be an OUTPUT for this store to reach the VDG: the engine sets DDRB=$38
+  * at startup for exactly that, then narrows it to $3C, and both leave bit 3 an output. The bit is DRIVEN here on
+  * every picture -- set to 1 normally, cleared for the flash -- rather than or-ed, because the loop leaves ORB at
+  * $F9 (CSS clear) and an or-only version cleared a bit that was already clear, so the flash never showed. */
  if(hurtFlash){IO(0xff22)&=247;}else{IO(0xff22)|=8;}
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
  else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
