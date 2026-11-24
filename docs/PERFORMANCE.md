@@ -88,3 +88,15 @@ reproducible. The "37" was a stale `wyrmfire.bin` left in the run directory by a
 attributed to ×8 was not ×8 at all.
 The lesson is in the harness itself: **the run directory is a cache.** A measurement is only about the binary if
 you put that binary there first; this document's commands should always copy the build into the run dir first.
+
+### The loading screen's controls text (item 2, costs the engine 0 bytes)
+
+The loader sets the VDG to alphanumeric internal ( = $FD: AG=1, V2..V0=111) and writes one line of cells on
+the text page while the level unpacks. It runs BEFORE the engine image exists, so it cannot repeat, and
+program_end is unchanged at $4DEF -- **0 engine bytes**, exactly as intended.
+
+The encounter numbers moved again -- stationary 15.63, dodge 12.96, **spread 10.29 -> 10.71** -- and that is the
+same phase effect recorded above, not a speed-up: the loader's draw is a single one-off before the game starts.
+Every behaviour assertion in the encounter harness is unchanged (hp 92, spreadVictims 2).
+
+bin 9,685 -> 9,741 bytes, all of it loader-side.

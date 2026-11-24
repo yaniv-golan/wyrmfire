@@ -19,6 +19,25 @@ start   orcc #$50
 clrscr  std ,x++
         cmpx #$0600
         bcs clrscr              ; clear $0400..$05FF exactly; bls would run one store past the end
+* The controls, on the screen while the level unpacks. The VDG starts in a GRAPHICS mode (AG=0), and the engine
+* only switches to its text mode later, so set alphanumeric internal here to be able to write cells at all: $FF22
+* bit 7 (AG) and V2..V0 = 111. The three SAM stores above already turned all-RAM on.
+        lda #$FD
+        sta $ff22
+* The 32x16 text page at $0400 holds one byte a cell. Space is $60 in this VDG's internal font.
+        ldx #$0400
+        lda #$60
+fill    sta ,x+
+        cmpx #$0600
+        bcs fill
+* "ARROWS TURN, SPACE FIRES" on row 6 (cell $0400 + 6*32 + 3)
+        ldx #$0400+6*32+3
+        ldu #msgctl
+putctl  lda ,u+
+        beq done2
+        sta ,x+
+        bra putctl
+done2
         ldx #compressed_end
         ldy #$fe00
 copy    lda ,-x
@@ -49,6 +68,8 @@ again   lda ,u+
         bne again
         bra next
 launch  jmp image_start
+msgctl  fcc "ARROWS TURN  SPACE FIRES"
+        fcb 0
 compressed
         include "packed.inc"
 compressed_end
