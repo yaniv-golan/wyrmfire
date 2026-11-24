@@ -41,6 +41,24 @@ def build_map(lumps):
     return m
 
 
+def _step_blocked(vs, ls, ax, ay, bx, by):
+    """Does the segment (ax,ay)-(bx,by) touch a one-sided or impassable linedef? Integer, closed test."""
+    def orient(px, py, qx, qy, rx, ry):
+        v = (qx - px) * (ry - py) - (qy - py) * (rx - px)
+        return (v > 0) - (v < 0)
+    def within(px, py, qx, qy, rx, ry):
+        return min(px, qx) <= rx <= max(px, qx) and min(py, qy) <= ry <= max(py, qy)
+    for a, b, flags, _, _, _, left in ls:
+        if left != 65535 and not flags & 1: continue
+        (cx, cy), (dx, dy) = vs[a], vs[b]
+        d1, d2 = orient(cx, cy, dx, dy, ax, ay), orient(cx, cy, dx, dy, bx, by)
+        d3, d4 = orient(ax, ay, bx, by, cx, cy), orient(ax, ay, bx, by, dx, dy)
+        if d1 * d2 < 0 and d3 * d4 < 0: return True
+        if (d1 == 0 and within(cx, cy, dx, dy, ax, ay)) or (d2 == 0 and within(cx, cy, dx, dy, bx, by)) \
+                or (d3 == 0 and within(ax, ay, bx, by, cx, cy)) or (d4 == 0 and within(ax, ay, bx, by, dx, dy)): return True
+    return False
+
+
 def _build(lumps, oy, h):
     vs = list(struct.iter_unpack('<hh', lumps['VERTEXES']))
     ls = list(struct.iter_unpack('<7H', lumps['LINEDEFS']))
@@ -99,6 +117,14 @@ def _build(lumps, oy, h):
             for bit, off in ((1, 1), (2, -1), (4, 128), (8, -128)):
                 if not grid[i + off]: grid[i] &= ~bit
     seed = int(cell(*start[:2]))
+    # A start on a cell edge can sample its own cell centre as outside (Freedoom E1M2): take the
+    # playable neighbour whose centre is nearest the start (lowest index on a tie), provided the
+    # step from the start to that centre touches no one-sided or impassable line.
+    if 0 <= seed < len(grid) and not grid[seed]:
+        near = [((ox + 32 + 64 * (j % 128) - start[0]) ** 2 + (oy + 32 + 64 * (j // 128) - start[1]) ** 2, j)
+                for j in (seed + o for o in (-129, -128, -127, -1, 1, 127, 128, 129)) if 0 <= j < len(grid) and grid[j]
+                and not _step_blocked(vs, ls, start[0], start[1], ox + 32 + 64 * (j % 128), oy + 32 + 64 * (j // 128))]
+        if near: seed = min(near)[1]
     if not 0 <= seed < len(grid) or not grid[seed]:
         raise ValueError('player start lies outside the playable map')
     reached = {seed}; q = deque([seed])
