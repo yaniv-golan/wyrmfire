@@ -43,7 +43,10 @@ while i<len(stream):
     if ORG+written>src+i:raise ValueError('Loader catches unread input')
 assert written==len(raw)
 (out/'packed.inc').write_text('image_start equ $%x\nimage_end equ $%x\n'%(ORG,ORG+len(raw))+'\n'.join(' fcb '+','.join(map(str,stream[i:i+32])) for i in range(0,len(stream),32))+'\n')
-subprocess.run(['lwasm','--format=raw','-I'+str(out),'-o',str(out/'load.raw'),str(Path(__file__).resolve().parent.parent/'src'/'loader.asm')],check=True)
+# --list writes the assembly listing beside load.raw: the harnesses need the loader's own `launch` address (the
+# clear before the first repaint is only observable there), and reading it from the build keeps it in step with the
+# source -- a hard-coded number in a test would pass on nothing the day the loader grew.
+subprocess.run(['lwasm','--format=raw','-I'+str(out),'--list='+str(out/'loader.lst'),'-o'+str(out/'load.raw'),str(Path(__file__).resolve().parent.parent/'src'/'loader.asm')],check=True)
 data=(out/'load.raw').read_bytes()
 if len(data)>0x8000-0x0c00:raise ValueError('Loader too large for ROM mode')
 (out/'wyrmfire.bin').write_bytes(struct.pack('>BBHHHB',85,2,0x0c00,len(data),0x0c00,170)+data)

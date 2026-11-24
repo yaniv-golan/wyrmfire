@@ -13,7 +13,7 @@ typedef unsigned int word;
 typedef struct {byte x,y,kind,hp;} Thing;
 static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
-static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown;
+static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
 static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
 static word px,py; /* high byte = map cell, low byte = fraction */
 static const sb *vx,*vy;
@@ -61,7 +61,7 @@ static void startLevel(){
  count=PACK[6];
  for(i=0;i<count;i++){Thing *o=things+i;o->x=*p++;o->y=*p++;o->kind=*p++;o->hp=o->kind==5?12:o->kind>=3?4:2;}
  px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
- movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;
+ movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte shading;
 static byte dirtyCols[2][32],page;
@@ -97,8 +97,19 @@ static void sprite(const byte *shape,byte col0,byte row,byte w,byte h){
 static void text(byte x,byte y,const char *s){
  byte *p=back+((word)y<<5)+x;while(*s){word glyph=(word)*s++-32;const byte *g=font+(glyph<<3)+glyph;byte i;for(i=0;i<9;i++)p[(word)i<<5]=g[i];p++;}
 }
+/* The KEY field of the HUD: one glyph per key slot -- '1' '2' '3' for the keys held and '-' for those not, so a
+ * player sees WHICH keys are in hand. It used to print the bitmask as a decimal, so holding keys 1 and 2 showed "3". */
+static void keysHud(byte x,byte y,byte k){
+ byte i;char one[2];
+ for(i=0;i<3;i++){one[0]=(k&(1<<i))?'1'+i:'-';one[1]=0;text(x+i,y,one);}
+}
 static void number(byte x,byte y,byte n){
  char digits[4];digits[0]='0'+n/100;digits[1]='0'+(n/10)%10;digits[2]='0'+n%10;digits[3]=0;text(x,y,digits);
+}
+/* Two digits, zero padded: the end screen's clock and kill count, which are two cells wide. number() is fixed at
+ * three (the HUD's fields), and its 001 left 00: on the row once the ':' was written over its last column. */
+static void twodigits(byte x,byte y,byte n){
+ char digits[3];digits[0]='0'+n/10;digits[1]='0'+n%10;digits[2]=0;text(x,y,digits);
 }
 static const byte *audioPos,*audioEnd;
 static void sound(byte i){audioPos=ASSET(i);audioEnd=audioPos+ASSET_LEN(i);}
@@ -174,13 +185,34 @@ static void move(int dir){
  if(cross(px>>8,py>>8,px>>8,y>>8)&&loadArea(areaAt(px>>8,y>>8)))py=y;
 }
 static void cue(byte finish){
- byte *visible=back==(byte*)0xe000?(byte*)0x400:(byte*)0xe000;
- byte *hidden=back;byte i;back=visible;
- for(i=64;i<104;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
- text(7,72,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
- text(7,87,"ENTER SKIPS MUSIC");
+ /* Build the end screen on the page that is NOT on the screen, then flip the SAM to show it, exactly as draw()
+  * does at the end of its own body. `back` always holds the hidden page, so the text goes there.
+  *
+  * Writing to the VISIBLE page was the bug: the beam draws the line while text() is still filling it, so a row
+  * came out as "TIM", its last columns landing after that frame's scan. And because cue() never flipped, the
+  * finished screen sat on the hidden page while the next draw() showed the other one -- the row was correct in
+  * RAM (measured: "TIME 01:03  KILLS 09") and invisible on the screen.
+  *
+  * Rows are 9 scanlines tall (text() writes 9), so they must be at least 9 apart: the old 72/80/87 spacing had
+  * "LEVEL CLEAR" touching the TIME row and "ENTER SKIPS MUSIC" starting inside it. draw() also writes
+  * "LEVEL CLEAR. ENTER" at y=76 every frame, 76..84, straight across the old TIME row. The end screen now sits
+  * below that band: title 92, time/kills 101, the prompt 110. */
+ byte i;   /* `back` is already the hidden page: draw() leaves it pointing away from the screen */
+ for(i=96;i<120;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
+ text(7,92,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
+ /* The level's kills, on the end screen. There is no TIME: a picture costs 4.5 to 60 PAL fields depending on how
+  * much the renderer and the disk loader have to do (about 11 pictures a second in a quiet room down to ~1 under
+  * load), so a clock counted in pictures cannot be right. Counting real fields needs a field interrupt: one was
+  * tried (the ROM vector at $FFE0-$FFFF points through the RAM word at $010C, which the engine can own, and the
+  * handler fits in the free space), and that build did not yet reach the game loop. So the time is dropped rather
+  * than shown wrong. The kill count is exact; twodigits() draws it two cells wide. */
+ if(finish){text(12,101,"KILLS");twodigits(18,101,kills);}
+ text(7,110,"ENTER SKIPS MUSIC");
+ /* show what was just drawn: draw()'s own flip (bit 3 clears the low page, bit 2 the high one) */
+ if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
+ else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
  tune(finish?victoryNotes:interNotes);
- back=hidden;for(i=0;i<32;i++){dirtyCols[0][i]=1;dirtyCols[1][i]=1;}
+ for(i=0;i<32;i++){dirtyCols[0][i]=1;dirtyCols[1][i]=1;}
 }
 static void use(){
  byte x=px>>8,y=py>>8;int j;
@@ -268,11 +300,19 @@ static void draw(){
  {byte readyAmmo=gun==2?0:gun?shells:ammo;if(!valid[i]||readyAmmo!=oldAmmo[i]){number(1,177,readyAmmo);oldAmmo[i]=readyAmmo;}}
  if(!valid[i]||health!=oldHP[i]){byte y;const byte *f=health<45?wounded:marine;byte *d=back+32*163+16;
     number(9,177,health);for(y=0;y<25;y++){d[0]=*f++;d[1]=*f++;d[2]=*f++;d+=32;}oldHP[i]=health;}
- if(!valid[i]||keys!=oldKeys[i]){number(19,177,keys);oldKeys[i]=keys;}
+ if(!valid[i]||keys!=oldKeys[i]){keysHud(19,177,keys);oldKeys[i]=keys;}
  if(!valid[i]||level!=oldLevel[i]){number(25,177,level+1);oldLevel[i]=level;}
  valid[i]=1;
  if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
  if(won){text(5,76,"LEVEL CLEAR. ENTER");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
+ /* ONE-PICTURE BORDER FLASH when a hit lands: the VDG's colour set is inverted for the frame the hit is drawn in
+  * (CSS, $FF22 bit 3, which the engine leaves set to 1), then put back on the next draw. No memory moves, so it
+  * costs the player nothing; hurtFlash is set by hurt() and counted down once a frame. */
+ /* CSS is bit 3 of PIA1 port B. It must be an OUTPUT for this store to reach the VDG: the engine sets DDRB=$38
+  * at startup for exactly that, then narrows it to $3C, and both leave bit 3 an output. The bit is DRIVEN here on
+  * every picture -- set to 1 normally, cleared for the flash -- rather than or-ed, because the loop leaves ORB at
+  * $F9 (CSS clear) and an or-only version cleared a bit that was already clear, so the flash never showed. */
+ if(hurtFlash){IO(0xff22)&=247;}else{IO(0xff22)|=8;}
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
  else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
  IO(0x200)++;IO(0x201)=angle;IO(0x202)=px>>8;IO(0x203)=py>>8;IO(0x204)=health;IO(0x205)=ammo;IO(0x206)=level;IO(0x207)=kills;
@@ -325,7 +365,7 @@ int main(){
       if(key(3,32))move(2);if(key(4,32))move(-2);
       animateDoor();
       if(useNow&&!wasUse)use();
-      if(flashTime)flashTime--;if(cooldown)cooldown--;
+      if(flashTime)flashTime--;if(cooldown)cooldown--;if(hurtFlash)hurtFlash--;
     }
     wasUse=useNow;if(health&&!won)simulate();draw();
     if(health&&!won&&key(7,32)&&!cooldown){

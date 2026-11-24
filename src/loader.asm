@@ -1,9 +1,48 @@
         org $0c00
 start   orcc #$50
         lds #$fe00
+* The SAM decodes these by ADDRESS, not by the value written: the even member of a pair clears its bit and the odd
+* sets it. $FFDA clears M0, $FFDD sets M1 and $FFDF sets TY -- so these three stores are what turn on ALL-RAM and
+* select 64K, which the copy to $FE00 below needs (before them, the upper half is ROM and the stores are dropped).
+* The A register's value is irrelevant to them.
         sta $ffda
         sta $ffdd
         sta $ffdf
+* The screen pages are cleared further down, by the $60 fill, in one pass: the engine's own draw only paints what
+* it knows about, so whatever the previous occupant of RAM left in $0400 showed as garbage for the first fields
+* (~31-41) after the unpack. (The $E000 page is cleared by the engine's first clearScreen; $1C00 is the engine
+* image, so only $0400-$05FF is a screen page here.)
+* The controls, on the screen while the level unpacks. Alphanumeric INTERNAL is $00 on $FF22: bit 7 (AG) clear
+* selects text on the MC6847, and bit 4 (INTEXT) clear is the chip's own font. $FD, which this used to write, has
+* bit 7 SET -- that is the highest-resolution GRAPHICS mode (AG=1, GM7), so the whole screen painted as an empty
+* colour field and a player saw nothing at all while the level unpacked. The cells were written either way; the
+* mode was what kept them off the screen (measured: $FD renders 0 ink pixels in the text rows, $00 renders all
+* 25 cells as the glyphs the chip's font gives). The SAM already has the display at $0400 (its boot value), and
+* the three stores above already turned all-RAM on.
+        lda #$00
+        sta $ff22
+* The 32x16 text page at $0400 holds one byte a cell, and it is cleared HERE, in one pass: this fill of $60 is
+* the whole clear. item 3's zero-fill of the same range used to run first and was dead code -- every byte it
+* wrote was overwritten by this loop a few instructions later. $60 is this VDG's space cell, so the page comes up
+* lit rather than black, which is what the controls are drawn on.
+        ldx #$0400
+        lda #$60
+fill    sta ,x+
+        cmpx #$0600
+        bcs fill              ; $0400..$05FF exactly; bls would run one store past the end
+* "ARROWS TURN  SPACE FIRES" on row 6 (cell $0400 + 6*32 + 3). The SPACES are written as $60, not the ASCII $20
+* the literal carries: on a $60 field a $20 cell is a DARK cell and renders as a black block between the words.
+* putctl copies letters through and turns $20 into $60.
+        ldx #$0400+6*32+3
+        ldu #msgctl
+putctl  lda ,u+
+        beq done2
+        cmpa #$20
+        bne putch
+        lda #$60
+putch   sta ,x+
+        bra putctl
+done2
         ldx #compressed_end
         ldy #$fe00
 copy    lda ,-x
@@ -34,6 +73,8 @@ again   lda ,u+
         bne again
         bra next
 launch  jmp image_start
+msgctl  fcc "ARROWS TURN  SPACE FIRES"
+        fcb 0
 compressed
         include "packed.inc"
 compressed_end

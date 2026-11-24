@@ -43,6 +43,7 @@ jobs:
           path: |
             build/wyrmfire.bin
             build/engine.map
+            build/loader.lst
             build/compile.log
           if-no-files-found: ignore
 
@@ -149,6 +150,16 @@ jobs:
         run: node test/harness/swap.cjs cloadm build
       - name: Encounter harness
         run: node test/harness/encounter.cjs cloadm build
+      # The display harnesses read the RENDERED frame (or the loader's own page), not screenText: they are what
+      # catch a screen a player cannot see. They need build/loader.lst, which the engine artifact now carries.
+      - name: Loading screen shows its controls
+        run: node test/harness/loading-controls.cjs cloadm build
+      - name: Loader clears the screen before the unpack
+        run: node test/harness/loader-clear.cjs cloadm build
+      - name: HUD key glyphs
+        run: node test/harness/hud-keys.cjs cloadm build
+      - name: End screen shows KILLS (no TIME)
+        run: node test/harness/end-screen.cjs cloadm build
       - name: Route harness
         timeout-minutes: 20
         run: ONE_LEVEL=1 node test/harness/route.cjs cloadm build
