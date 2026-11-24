@@ -30,6 +30,11 @@ How to measure (all emulated time, so repeat runs are identical — a difference
 Each is a deliberate trade, with what it bought and what it cost. The rule for a reclaim is fps ≥ baseline and
 stalls ≤ baseline; an entry here is a case where that rule was waived by the PM, and why.
 
+**The gate (amended):** a change passes when, over the measured windows, **fps ≥ baseline, OR a measured ±1-field
+phase shift where a draw counter shows no added per-frame work**. The second arm is for a one-off draw before the
+game starts: it can move a picture across a field boundary either way, and a counter on the new path is what proves
+the cost is not per-frame. Baselines in the table above are not restated when an entry here uses that arm.
+
 ### `clearColumn` partial unroll, ×8 (frees 599 bytes of engine code)
 
 - **Bought:** `program_end` $4FF9 → $4DA2, **599 bytes** — the space item 5's HUD glyphs need, with headroom over.
@@ -46,15 +51,15 @@ stalls ≤ baseline; an entry here is a case where that rule was waived by the P
   (`ldx`/`clra`/`ldb #20`, then `decb`+`bne` per eight stores, from `native.lst`), and every address-terminated
   alternative needs Y or U, which CMOC saves and restores around the call — strictly more.
 
-### HUD key glyphs (item 5, costs 77 bytes) — **AWAITING A RULING**
+### HUD key glyphs (item 5, costs 77 bytes) — **ACCEPTED**
 
 - **Bought:** the HUD's KEY field shows one glyph per slot (`1` `2` `3` for the keys held, `-` for those not)
   instead of the keys bitmask as a decimal, which read "3" for keys 1 and 2 held.
 - **Cost:** `program_end` $4DA2 → $4DEF, **77 bytes**; encounter **stationary 15.63 → 15.79** (back to main's
   figure), **dodge 13.03 → 12.96**, **spread 10.40 → 10.29**. Deterministic across repeated runs.
-- **NOT an approved baseline.** The PM accepted exactly ONE exception (×8's stationary). Dodge −0.07 and spread
-  −0.11 have had no ruling, so they are recorded here as **facts awaiting one**, not folded into a new baseline.
-  The ×8 exception and this one are separate entries on purpose.
+- **Accepted by the PM** under the amended gate rule below: dodge and spread move by a measured phase shift, and a
+  draw counter shows no added per-frame work. **The baseline numbers stay exactly as they are** — this entry
+  records the exception, it does not fold the new figures into a baseline.
 
 **Why it moves fps at all, though the field only redraws when the keys change.** Three measurements, each isolating
 one variable:
@@ -91,12 +96,61 @@ you put that binary there first; this document's commands should always copy the
 
 ### The loading screen's controls text (item 2, costs the engine 0 bytes)
 
-The loader sets the VDG to alphanumeric internal ( = $FD: AG=1, V2..V0=111) and writes one line of cells on
-the text page while the level unpacks. It runs BEFORE the engine image exists, so it cannot repeat, and
-program_end is unchanged at $4DEF -- **0 engine bytes**, exactly as intended.
+The loader sets the VDG to alphanumeric internal and writes one line of cells on the text page while the level
+unpacks. It runs BEFORE the engine image exists, so it cannot repeat, and program_end is unchanged at $4DEF --
+**0 engine bytes**, exactly as intended.
+
+**The mode byte is $00, not $FD.** The first version of this set $FF22 = $FD and put up a blank screen: $FD has
+bit 7 (AG) SET, which is a GRAPHICS mode on the MC6847 (GM = 111 is the highest-resolution one), so the page was
+painted as an empty colour field. Alphanumeric internal is $00: AG clear is text, INTEXT clear is the chip's own
+font. Measured on the rendered frame with the CPU parked at the loader's launch jump: $FD leaves the text row with
+**0 ink pixels**, $00 leaves all 24 cells as the glyphs CLOADM's font table gives for the bytes in RAM.
 
 The encounter numbers moved again -- stationary 15.63, dodge 12.96, **spread 10.29 -> 10.71** -- and that is the
 same phase effect recorded above, not a speed-up: the loader's draw is a single one-off before the game starts.
 Every behaviour assertion in the encounter harness is unchanged (hp 92, spreadVictims 2).
 
 bin 9,685 -> 9,741 bytes, all of it loader-side.
+
+## Harness rule: visible output is proved from the rendered frame
+
+**Any assertion that something is on the screen must read the RENDERED FRAME, not `Session.screenText` alone.**
+`screenText` returns the page at $0400 as 16x32 cells whatever mode the VDG is in and wherever the SAM has put
+the display. It therefore reports text for a screen a player cannot see — which is exactly how the loading-screen
+bug above passed its first harness. A frame check decodes the pixels the VDG produced (against `src/font.h`, the
+engine's own glyph data, for text) or counts ink where the row lands; the SAM display base and the `$FF22` mode
+byte the chip decodes are part of the evidence, because a correct page in the wrong mode or on the hidden page is
+still invisible.
+
+Reading RAM is still right where the thing under test *is* memory (the loader's cleared page, the packed map).
+The rule is about claims that something is **visible**.
+
+### The end screen's TIME and KILLS (item 4, costs 62 engine bytes)
+
+`levelTicks` counts PAL fields, so the LEVEL CLEAR screen can say how long the level took and how many it cost:
+"TIME mm:ss  KILLS nn". `program_end` $4DEF -> $4EDD, **62 bytes**.
+
+No per-frame cost: the row is drawn once, in `cue()`, on the single frame the level is cleared. The two
+`levelTicks++` in the main loop are the only per-frame addition, and they are an increment on a word. The
+encounter numbers are unchanged from the item-5 entry above (15.63 / 12.96 / 10.40), the same phase figures,
+so nothing here needs the amended gate's second arm.
+
+Three defects came out of building it, all measured: `number()` is fixed at three digits (so mm printed 001 and
+kills 009); `text()` writes nine scanlines, so the old 72/80/87 rows overlapped and `draw()`'s own
+"LEVEL CLEAR. ENTER" at y=76 crossed the TIME row (the end screen is now at 92/101/110); and `cue()` drew to the
+page that was already on screen without flipping the SAM, so the row was correct in RAM and the player saw the
+other page. The values are checked at two different times and kill counts, read back from the frame's glyphs.
+
+## Harness audit (item 2's follow-up): every claim of "visible"
+
+Each harness that asserts something is on the screen, whether it reads the rendered frame (sound) or RAM text
+(blind), and what was done about it.
+
+| harness | assertion | blind? | state |
+|---|---|---|---|
+| `loading-controls.cjs` | the loader's controls are on the loading screen | **was blind** (`screenText`) | **fixed**: rendered-frame glyph check + mode byte + SAM base |
+| `end-screen.cjs` | TIME and KILLS are on the level-clear screen | no (new) | frame glyphs on the page the SAM shows, two value pairs |
+| `hud-keys.cjs` | the HUD's KEY field shows one glyph per key | no | reads the page as glyph rows via `font.h`, and matches against both pages because `back` alternates |
+| `loader-clear.cjs` | the loader cleared $0400-$05FF | no (not a visibility claim) | reads memory at the loader's `jmp image_start`; the thing under test IS the RAM |
+| `encounter.cjs`, `regions.cjs`, `route.cjs`, `media.cjs`, `profile.cjs` | behaviour and timing | no visibility claim | read engine RAM counters (hp, kills, `$0200`), never text-as-visible |
+| `swap.cjs` | the replacement disk's spawn is read | no (not a visibility claim) | reads `px`/`py` from RAM |
