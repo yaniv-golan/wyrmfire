@@ -109,6 +109,7 @@ if the engine really does more work: measured by stepping the CPU and summing `c
 | `0eb8ed5` | + item 4 | 78,458 | **+354** |
 | `d99e225` | + item 4's clock and one-picture flash | 78,319 | **−139** |
 | `69f1d2a` | + docs/CI | 78,319 | 0 |
+| `860d5cd` | **the clock dropped, KILLS only** | **78,091** | **−228** (the counter and its word are gone) |
 
 So: item 5 costs about 90 cycles a picture (three `text()` calls when the keys change), item 4's clock about 354
 (the `levelTicks++` and the divide at level clear), and making the flash one picture instead of two gives 139
