@@ -232,3 +232,128 @@ test('Freedoom E1M1 converts deterministically and round-trips', { skip: !FREEDO
   assert.equal(assets.shotgun.length, 360);
   assert.ok(assets.snd_fire.length > 0 && assets.introNotes.length % 3 === 0);
 });
+
+// ------------------------------------------------------------ player start on a cell edge
+
+// Rooms as closed one-sided loops (a rectangle [x0, y0, x1, y1] or a polygon [[x, y], ...]), plus
+// optional two-sided lines [x0, y0, x1, y1, flags]; only the lumps buildMap reads.
+function roomsLevel(shapes, [x, y], inner = []) {
+  const v = [], lines = [];
+  for (const sh of shapes) {
+    const pts = typeof sh[0] === 'number' ? [[sh[0], sh[1]], [sh[0], sh[3]], [sh[2], sh[3]], [sh[2], sh[1]]] : sh;
+    const k = v.length; v.push(...pts);
+    pts.forEach((_, i) => lines.push([k + i, k + (i + 1) % pts.length, 1, 65535]));
+  }
+  for (const [x0, y0, x1, y1, flags] of inner) { const k = v.length; v.push([x0, y0], [x1, y1]); lines.push([k, k + 1, flags, 0]); }
+  return {
+    THINGS: Uint8Array.from([x, y, 90, 1, 7].flatMap(le16)),
+    LINEDEFS: Uint8Array.from(lines.flatMap(([a, b, flags, left]) => [a, b, flags, 0, 0, 0, left].flatMap(le16))),
+    SIDEDEFS: Uint8Array.from([...le16(0), ...le16(0), ...name8('-'), ...name8('-'), ...name8('STARTAN3'), ...le16(0)]),
+    VERTEXES: Uint8Array.from(v.flatMap(([px, py]) => [...le16(px), ...le16(py)])),
+  };
+}
+const SQUARE = [0, 0, 256, 256]; // cell centres at -64 + 64k; 0 inside, 256 outside
+// Every case also runs through the Python reference (tools/reference/levelmap.py) when python3 is
+// available, so a change to the fallback in only one of the two converters fails here.
+const START_CASES = [];
+function jsStart(shapes, start, inner) {
+  try { const m = C.buildMap(roomsLevel(shapes, start, inner)); assert.ok(m.grid[m.seed]); return [m.seed % 128, Math.floor(m.seed / 128)]; } catch (e) { return e.message; }
+}
+const seedOf = (shapes, start, inner = []) => { START_CASES.push([shapes, start, inner]); const r = jsStart(shapes, start, inner); assert.ok(Array.isArray(r), r); return r; };
+const refused = (shapes, start, inner = []) => { START_CASES.push([shapes, start, inner]); assert.equal(jsStart(shapes, start, inner), 'player start lies outside the playable map'); };
+
+test('a player start whose own cell centre samples outside moves to the nearest playable neighbour', () => {
+  // (250, 128): its cell centre (256, 128) lies on the east wall; the cell west of it is inside.
+  assert.deepEqual(seedOf([SQUARE], [250, 128]), [4, 3]);
+  // Unchanged when the start's own cell is playable; still refused when nothing near it is.
+  assert.deepEqual(seedOf([SQUARE], [128, 128]), [3, 3]);
+  refused([SQUARE], [600, 600]);
+  // The same through the WAD reader.
+  const wad = makeWad([['PLAYPAL', palette()], ...roomLumps().map(([n, d]) => [n, n === 'THINGS' ? [...[250, 128, 90, 1, 7].flatMap(le16), ...d.slice(10)] : d])]);
+  assert.equal(C.buildMap(new C.Wad(wad).level('MAP01')).seed, 3 * 128 + 4);
+});
+
+test('edge-start fallback: equal distances take the lowest index; diagonal neighbours count', () => {
+  // (250, 160): neighbours (4,3) and (4,4) are both 58,32 away; the lower index (4,3) is diagonal.
+  assert.deepEqual(seedOf([SQUARE], [250, 160]), [4, 3]);
+  // (250, 250): both orthogonal neighbour centres lie on a wall; only the diagonal (4,4) is inside.
+  assert.deepEqual(seedOf([SQUARE], [250, 250]), [4, 4]);
+});
+
+test('edge-start fallback never steps across a one-sided line', () => {
+  // Just outside the outer wall: the inside neighbour is across the wall.
+  refused([SQUARE], [128, 270]);
+  // A sliver room (272-300) holds no cell centre; the big room's cell is across both walls.
+  refused([SQUARE, [272, 0, 300, 256]], [286, 128]);
+  // Beside a void gap (256-320): the west room is across its wall, and the east room's nearest
+  // centres lie exactly on its west wall; a step that ends on a wall is refused.
+  refused([SQUARE, [320, 0, 576, 256]], [260, 128]);
+  // A narrow side room next to the main one: its nearest playable centre is across both walls.
+  refused([SQUARE, [258, 0, 270, 192]], [264, 96]);
+});
+
+test('edge-start fallback: touching a wall counts as crossing it', () => {
+  // The start itself lies on the east wall: every step from it touches that wall.
+  refused([SQUARE], [256, 128]);
+  // A triangular pillar whose apex (220, 128) lies on the step from (250, 128) to (192, 128):
+  // (4,3) is refused, so the nearest clear neighbours (4,2) and (4,4) tie and (4,2) wins.
+  assert.deepEqual(seedOf([SQUARE, [[220, 128], [226, 150], [214, 150]]], [250, 128]), [4, 2]);
+  // A pillar edge lying along the same step (collinear overlap) blocks it the same way.
+  assert.deepEqual(seedOf([SQUARE, [200, 128, 220, 160]], [250, 128]), [4, 2]);
+});
+
+test('edge-start fallback never steps across a two-sided impassable line', () => {
+  // An impassable (flags 1) two-sided line at x = 224 between the start and every inside neighbour.
+  refused([SQUARE], [250, 128], [[224, 0, 224, 256, 1]]);
+  // The same line without the impassable flag does not block the step.
+  assert.deepEqual(seedOf([SQUARE], [250, 128], [[224, 0, 224, 256, 0]]), [4, 3]);
+});
+
+test('edge-start cases: the Python reference converter agrees', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const ref = new URL('../tools/reference/', import.meta.url).pathname;
+  const probe = spawnSync('python3', ['-c', 'pass']);
+  if (probe.error || probe.status !== 0) { t.skip('python3 not available'); return; }
+  assert.ok(START_CASES.length >= 14, `only ${START_CASES.length} cases collected`);
+  const lumps = START_CASES.map(([shapes, start, inner]) => Object.fromEntries(Object.entries(roomsLevel(shapes, start, inner)).map(([k, v]) => [k, [...v]])));
+  const py = spawnSync('python3', ['-I', '-c', `import sys, json
+sys.path.insert(0, sys.argv[1])
+import levelmap
+out = []
+for L in json.load(sys.stdin):
+    try:
+        m = levelmap.build_map({k: bytes(v) for k, v in L.items()})
+        out.append([m['seed'] % 128, m['seed'] // 128])
+    except ValueError as e:
+        out.append(str(e))
+print(json.dumps(out))`, ref], { input: JSON.stringify(lumps), encoding: 'utf8' });
+  assert.equal(py.status, 0, py.stderr);
+  assert.deepEqual(JSON.parse(py.stdout), START_CASES.map(([shapes, start, inner]) => jsStart(shapes, start, inner)));
+});
+
+// ------------------------------------------------------------ command line
+
+test('cli: --help prints a short usage; unreadable inputs are one line and exit 2; other errors are thrown', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os');
+  const cli = new URL('../converter/cli.mjs', import.meta.url).pathname;
+  const run = (...a) => spawnSync(process.execPath, [cli, ...a], { encoding: 'utf8' });
+  const help = run('--help');
+  assert.equal(help.status, 0);
+  const lines = help.stdout.trim().split('\n');
+  assert.ok(lines.length >= 2 && lines.length <= 6, help.stdout);
+  assert.match(lines[0], /^usage: /);
+  const missing = run('no-such-file.wad', '--map', 'E1M1');
+  assert.equal(missing.status, 2);
+  assert.equal(missing.stderr, 'cli.mjs: cannot read no-such-file.wad: no such file\n');
+  assert.equal(missing.stdout, '');
+  const dir = os.tmpdir();
+  const isDir = run(dir);
+  assert.equal(isDir.status, 2);
+  assert.equal(isDir.stderr, `cli.mjs: cannot read ${dir}: is a directory\n`);
+  // An error code the CLI does not map (ENAMETOOLONG) keeps its stack trace and exit code 1.
+  const long = run('x'.repeat(5000) + '.wad');
+  assert.equal(long.status, 1);
+  assert.match(long.stderr, /ENAMETOOLONG/);
+  assert.doesNotMatch(long.stderr, /^cli\.mjs: cannot read/m);
+});
