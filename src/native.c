@@ -15,6 +15,7 @@ static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
 static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
 static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
+static word levelTicks;   /* PAL fields since the level started: 50 fields = one second */
 static word px,py; /* high byte = map cell, low byte = fraction */
 static const sb *vx,*vy;
 static byte *back,*origin;
@@ -60,7 +61,7 @@ static void startLevel(){
  unpackTarget=GRID;source=packedGrid;length=0xac00+(*(word *)(PACK+4));decompress();
  count=PACK[6];
  for(i=0;i<count;i++){Thing *o=things+i;o->x=*p++;o->y=*p++;o->kind=*p++;o->hp=o->kind==5?12:o->kind>=3?4:2;}
- px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
+ px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;levelTicks=0;
  movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte shading;
@@ -105,6 +106,11 @@ static void keysHud(byte x,byte y,byte k){
 }
 static void number(byte x,byte y,byte n){
  char digits[4];digits[0]='0'+n/100;digits[1]='0'+(n/10)%10;digits[2]='0'+n%10;digits[3]=0;text(x,y,digits);
+}
+/* Two digits, zero padded: the end screen's clock and kill count, which are two cells wide. number() is fixed at
+ * three (the HUD's fields), and its 001 left 00: on the row once the ':' was written over its last column. */
+static void twodigits(byte x,byte y,byte n){
+ char digits[3];digits[0]='0'+n/10;digits[1]='0'+n%10;digits[2]=0;text(x,y,digits);
 }
 static const byte *audioPos,*audioEnd;
 static void sound(byte i){audioPos=ASSET(i);audioEnd=audioPos+ASSET_LEN(i);}
@@ -180,13 +186,32 @@ static void move(int dir){
  if(cross(px>>8,py>>8,px>>8,y>>8)&&loadArea(areaAt(px>>8,y>>8)))py=y;
 }
 static void cue(byte finish){
- byte *visible=back==(byte*)0xe000?(byte*)0x400:(byte*)0xe000;
- byte *hidden=back;byte i;back=visible;
- for(i=64;i<104;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
- text(7,72,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
- text(7,87,"ENTER SKIPS MUSIC");
+ /* Build the end screen on the page that is NOT on the screen, then flip the SAM to show it, exactly as draw()
+  * does at the end of its own body. `back` always holds the hidden page, so the text goes there.
+  *
+  * Writing to the VISIBLE page was the bug: the beam draws the line while text() is still filling it, so a row
+  * came out as "TIM", its last columns landing after that frame's scan. And because cue() never flipped, the
+  * finished screen sat on the hidden page while the next draw() showed the other one -- the row was correct in
+  * RAM (measured: "TIME 01:03  KILLS 09") and invisible on the screen.
+  *
+  * Rows are 9 scanlines tall (text() writes 9), so they must be at least 9 apart: the old 72/80/87 spacing had
+  * "LEVEL CLEAR" touching the TIME row and "ENTER SKIPS MUSIC" starting inside it. draw() also writes
+  * "LEVEL CLEAR. ENTER" at y=76 every frame, 76..84, straight across the old TIME row. The end screen now sits
+  * below that band: title 92, time/kills 101, the prompt 110. */
+ byte i;   /* `back` is already the hidden page: draw() leaves it pointing away from the screen */
+ for(i=96;i<120;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
+ text(7,92,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
+ /* The level's time and kills. 50 PAL fields a second, so levelTicks/50 is whole seconds; mm:ss is two digits
+  * each and kills two (twodigits), not number()'s three. */
+ if(finish){word secs=levelTicks/50;
+   text(7,101,"TIME");twodigits(12,101,(byte)(secs/60));text(14,101,":");
+   twodigits(15,101,(byte)(secs%60));text(19,101,"KILLS");twodigits(25,101,kills);}
+ text(7,110,"ENTER SKIPS MUSIC");
+ /* show what was just drawn: draw()'s own flip (bit 3 clears the low page, bit 2 the high one) */
+ if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
+ else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
  tune(finish?victoryNotes:interNotes);
- back=hidden;for(i=0;i<32;i++){dirtyCols[0][i]=1;dirtyCols[1][i]=1;}
+ for(i=0;i<32;i++){dirtyCols[0][i]=1;dirtyCols[1][i]=1;}
 }
 static void use(){
  byte x=px>>8,y=py>>8;int j;
@@ -326,7 +351,7 @@ int main(){
  readLevel();
  clearScreen(back);back=(byte*)0xe000;
  for(;;){
-    byte useNow=key(5,4),dKey=key(4,4);if(dKey&&!wasD)shading=!shading;wasD=dKey;turn++;
+    byte useNow=key(5,4),dKey=key(4,4);if(dKey&&!wasD)shading=!shading;wasD=dKey;turn++;levelTicks++;
     if(won||!health){if(key(0,64)){if(won)level=0;won=0;gun=0;armor=0;shells=0;ownedShotgun=0;health=100;ammo=50;readLevel();}}
     else{
       if(key(5,32))angle=(angle+1)&31;if(key(6,32))angle=(angle+31)&31;
