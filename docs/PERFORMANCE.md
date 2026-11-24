@@ -186,31 +186,40 @@ still invisible.
 Reading RAM is still right where the thing under test *is* memory (the loader's cleared page, the packed map).
 The rule is about claims that something is **visible**.
 
-### The end screen's TIME and KILLS (item 4, costs 238 engine bytes)
+### The end screen's KILLS (item 4, and why there is no TIME)
 
-`levelTicks` counts DRAWN PICTURES (it is bumped once per pass of the frame loop), and the LEVEL CLEAR screen says
-how long the level took and how many it cost: "TIME mm:ss  KILLS nn". `program_end` $4DEF -> $4EDD, **238 bytes**
--- not the 62 the first write-up claimed, which came from comparing the wrong pair of commits.
+The LEVEL CLEAR screen says how many the level cost: "KILLS nn". `program_end` $4DEF -> $4E60: **113 bytes**,
+which is 125 fewer than the TIME version it replaces ($4EDD).
 
-**The clock must divide by the picture rate, not the field rate.** The first version divided by 50 (PAL fields a
-second) while the counter was in pictures: measured, 500 real fields produced 113 pictures and levelTicks went up
-exactly 113, so TIME ran about 11x fast against fields and 4.4x against the picture rate. It divides by
-`PICTURES_PER_SEC` (11) now: 45 pictures span 4.00 s of emulated time here, so the engine draws ~11.25 pictures a
-second. The minute field is total seconds, so the wrap past 59 s reads 01:00.
+**There is no time, and that is a ruling, not an omission.** The clock went through two designs and both were
+wrong:
 
-No per-frame cost: `cue()` runs once, at the instant a level is cleared. The two `levelTicks++` in the loop are
-one word increment. The per-frame measure that shows this is **cycles per drawn picture** in the table above --
-a real quantity, unlike an end-screen draw counter, which is zero by construction and so proves nothing either way.
+* **counting drawn pictures** -- bumped once per pass of the frame loop, divided by a "pictures per second"
+  constant. But a picture costs 4.5 fields in a quiet room and the rate swings by more than an order of
+  magnitude under load (measured: 13 pictures in 60 frames at the spawn, 1 in 60 under forced zone reloads),
+  so no constant can be right. The first version divided by 50 (the field rate) and read ~11x fast; dividing
+  by a measured 11 was still wrong in any scene busier or quieter than the one it was calibrated in.
+* **counting real PAL fields** -- correct in principle, and eight attempts were made. The 6821 clears the field
+  latch only on a read of its DATA register (not a CRB read, not a CRB write -- measured, and a version that
+  wrote CRB counted 7x high). Polling it missed fields whenever the engine went longer than a field (17,773
+  cycles) without a poll: best placement reached 0.86x. An FS interrupt handler installs (the ROM vector at
+  $FFE0-$FFFF points through a RAM word at $010C, which the engine can own) but the engine then never draws a
+  picture at all -- 0 in 2000 frames against 95 for the build without it -- and masking the disk reads did not
+  change that, so the cause is not the transfer. That is a separate item, not solved here.
 
-Spread moved 10.71 -> 10.40 on this commit while stationary and dodge did not move at all (15.63 / 12.96 either
-side), and 10.40 is exactly ×8's own baseline figure — a phase artefact, not extra work. It passes under the
-amended gate rule's second arm. See the per-commit table above for the whole branch.
+An approximate clock presented as real was ruled out, so the number is dropped rather than shown wrong. **The
+kill count is exact**, so it is what the player gets.
 
-Three defects came out of building it, all measured: `number()` is fixed at three digits (so mm printed 001 and
-kills 009); `text()` writes nine scanlines, so the old 72/80/87 rows overlapped and `draw()`'s own
-"LEVEL CLEAR. ENTER" at y=76 crossed the TIME row (the end screen is now at 92/101/110); and `cue()` drew to the
-page that was already on screen without flipping the SAM, so the row was correct in RAM and the player saw the
-other page. The values are checked at two different times and kill counts, read back from the frame's glyphs.
+No per-frame cost, and dropping the clock gave some back: **cycles retired per drawn picture** measured
+78,319 at `d91ceea` (with the time counter in the loop) against **78,091** with it removed -- 228 cycles a
+picture cheaper, because the `levelTicks++` and its word are gone. `cue()` runs once, at the instant a level
+is cleared, and nothing in the loop counts anything for it. The end screen sits at rows 92/101/110, which do not overlap (`text()` writes nine scanlines, and
+`draw()`'s own "LEVEL CLEAR. ENTER" at y=76 covers 76..84).
+
+Three defects came out of building the row, all measured and all still fixed: `number()` is fixed at three digits
+(so kills printed 009, and `twodigits()` draws two); `text()` writes nine scanlines, so the old 72/80/87 spacing
+overlapped itself and the draw() band; and `cue()` drew to the page that was already on screen without flipping
+the SAM, so the row was correct in RAM while the player saw the other page.
 
 ## Harness audit (item 2's follow-up): every claim of "visible"
 
@@ -220,7 +229,7 @@ Each harness that asserts something is on the screen, whether it reads the rende
 | harness | assertion | blind? | state |
 |---|---|---|---|
 | `loading-controls.cjs` | the loader's controls are on the loading screen | **was blind** (`screenText`) | **fixed**: rendered-frame glyph check + mode byte + SAM base |
-| `end-screen.cjs` | TIME and KILLS are on the level-clear screen, and TIME is the REAL time | no | frame glyphs on the page the SAM shows; it dwells 125 real pictures and requires TIME to match the picture rate (poking levelTicks hid the 4.4x clock bug) |
+| `end-screen.cjs` | KILLS is on the level-clear screen, and no TIME is | no | frame glyphs decoded from the page the SAM shows, at two kill counts; asserts no "TIME" and no mm:ss anywhere in the end-screen band |
 | `hud-keys.cjs` | the HUD's KEY field shows one glyph per key | no | reads the page as glyph rows via `font.h`, and matches against both pages because `back` alternates |
 | `loader-clear.cjs` | the loader cleared $0400-$05FF | no (not a visibility claim) | reads memory at the loader's `jmp image_start`; the thing under test IS the RAM |
 | `encounter.cjs` | behaviour, plus the hit flash is exactly one picture and SND_HURT plays | no visibility claim | reads the colour-set bit the VDG decodes and `audioPos`, per picture |

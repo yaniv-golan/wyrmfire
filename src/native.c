@@ -15,11 +15,6 @@ static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
 static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
 static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
-/* Drawn pictures since the level started, and how many of them make a second. A pass of the frame loop draws one
- * picture and bumps levelTicks, so the unit is pictures, not fields: measured, 45 pictures span 4.00 s of emulated
- * time on this engine (PAL, 50 fields/s), which is 11.25 pictures a second. */
-static word levelTicks;
-#define PICTURES_PER_SEC 11
 static word px,py; /* high byte = map cell, low byte = fraction */
 static const sb *vx,*vy;
 static byte *back,*origin;
@@ -65,7 +60,7 @@ static void startLevel(){
  unpackTarget=GRID;source=packedGrid;length=0xac00+(*(word *)(PACK+4));decompress();
  count=PACK[6];
  for(i=0;i<count;i++){Thing *o=things+i;o->x=*p++;o->y=*p++;o->kind=*p++;o->hp=o->kind==5?12:o->kind>=3?4:2;}
- px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;levelTicks=0;
+ px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
  movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte shading;
@@ -205,17 +200,11 @@ static void cue(byte finish){
  byte i;   /* `back` is already the hidden page: draw() leaves it pointing away from the screen */
  for(i=96;i<120;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
  text(7,92,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
- /* The level's time and kills. levelTicks counts DRAWN PICTURES, not PAL fields -- it is bumped once per pass of
-  * the frame loop, and a picture costs about 4.4 fields on this engine (measured: 45 pictures in 4.00 s of
-  * emulated time). So the divisor is the picture rate, 50/4.44 ~= 11.25 pictures a second, and PICTURES_PER_SEC
-  * below carries it. Dividing by 50 read the clock about 4.4x fast -- the first version of this did that, and a
-  * 500-field run showed levelTicks at 113, not 500. mm and ss are two digits each (twodigits), not number()'s
-  * three, and the seconds are the total seconds modulo 60 so the wrap to the next minute is right. */
- if(finish){word secs=levelTicks/PICTURES_PER_SEC,mmins=secs/60;
-   /* the minute field is two digits while mm<100 (99 minutes), and the seconds modulo 60; past 99 minutes the
-    * minute field wraps, which is the same as the game simply being left running */
-   text(7,101,"TIME");twodigits(12,101,(byte)mmins);text(14,101,":");
-   twodigits(15,101,(byte)(secs%60));text(19,101,"KILLS");twodigits(25,101,kills);}
+ /* The level's kills, on the end screen. There is no TIME: this engine draws at 11 to 45 pictures a second
+  * depending on how much the renderer and the disk loader have to do, so a clock counted in pictures cannot be
+  * right, and counting real PAL fields would need a field interrupt the engine has no room or structure for.
+  * The kill count is exact, so it is the number the player gets. twodigits() draws it two cells wide. */
+ if(finish){text(12,101,"KILLS");twodigits(18,101,kills);}
  text(7,110,"ENTER SKIPS MUSIC");
  /* show what was just drawn: draw()'s own flip (bit 3 clears the low page, bit 2 the high one) */
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
@@ -365,7 +354,7 @@ int main(){
  readLevel();
  clearScreen(back);back=(byte*)0xe000;
  for(;;){
-    byte useNow=key(5,4),dKey=key(4,4);if(dKey&&!wasD)shading=!shading;wasD=dKey;turn++;levelTicks++;
+    byte useNow=key(5,4),dKey=key(4,4);if(dKey&&!wasD)shading=!shading;wasD=dKey;turn++;
     if(won||!health){if(key(0,64)){if(won)level=0;won=0;gun=0;armor=0;shells=0;ownedShotgun=0;health=100;ammo=50;readLevel();}}
     else{
       if(key(5,32))angle=(angle+1)&31;if(key(6,32))angle=(angle+31)&31;
