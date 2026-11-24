@@ -94,54 +94,53 @@ the record the entries above refer to; the draw counter is an end-screen count, 
 
 (These are the SHAs on the branch as pushed. The email rewrite changed every SHA, so the range is `594bbbe..2eae04c`; `2330b31` from an earlier draft no longer exists.)
 
-### CPU cycles per picture -- and what this measure can and cannot show
+### CPU cycles per picture
 
-`tools/cycles-per-picture.mjs` steps the machine for **N pictures** and reports `machine.cycle` divided by N.
-Emulation is deterministic, so the same build and window give the same figure to the last digit (checked three
-times). **How a row is measured:** from the game's third drawn picture onward (`$0200` changing marks a picture),
-across **N = 1000** picture boundaries, on a clean build of that commit.
+`tools/cycles-per-picture.mjs` steps the machine **one instruction at a time** (`runCycles(end, 1)`, which keeps
+the device and event processing) and stops **on the instruction at which `$0200` changed**, so each window boundary
+is the exact cycle of that store. Emulation is deterministic and the boundary is exact, so the figure does not
+depend on the window or the start point.
 
-**The figure depends on the window, and that is not noise.** One build, growing windows:
+**How a row is measured:** from the picture boundary `--after 3` (the game's fourth picture; the intro tune blocks
+for hundreds of frames first), across **N = 1000** picture boundaries. Stability, measured on two builds at two
+window sizes and two start points:
 
-| N | cycles / picture |
-|---|---|
-| 25 | 78,249.56 |
-| 50 | 78,605.38 |
-| 100 | 78,605.27 |
-| 200 | 78,694.20 |
-| 500 | 78,711.97 |
-| 1000 | 78,729.76 |
+| build | N=250, after 3 | N=250, after 50 | N=1000, after 3 | N=1000, after 50 |
+|---|---|---|---|---|
+| `5b2b4c1` | 78,707.3 | 78,707.3 | 78,706.0 | 78,706.0 |
+| `0eb8ed5` | 78,732.3 | 78,732.3 | 78,731.0 | 78,731.0 |
 
-Every row below is measured at **N = 1000**, the same window for all, with the committed script:
+(N=250 reads 1.3 cycles/picture higher than N=1000, in both builds. The **25-cycle gap between the two builds is
+identical in all four columns**.)
 
 | commit | what | cycles / picture |
 |---|---|---|
-| `5b2b4c1` | ×8 reclaim | 78,711.98 |
-| `c512619` | + item 5 HUD glyphs | 78,711.99 |
-| `30d5cd4` | + item 2 (`$FD`) | 78,694.20 |
-| `6fae5b4` | + item 2 fix (`$00`) | 78,694.20 |
-| `0eb8ed5` | + item 4 (TIME and KILLS) | 78,729.77 |
-| `d99e225` | + one-picture flash | 78,729.76 |
-| `69f1d2a` | + docs/CI | 78,729.76 |
-| `d91ceea` | + doc corrections | 78,729.76 |
-| `860d5cd` | **TIME dropped, KILLS only** | 78,694.20 |
-| `2eae04c` | + step-3 docs | 78,694.20 |
+| `5b2b4c1` | ×8 reclaim | 78,706 |
+| `c512619` | + item 5 HUD glyphs | 78,706 |
+| `30d5cd4` | + item 2 (`$FD`) | 78,706 |
+| `6fae5b4` | + item 2 fix (`$00`) | 78,706 |
+| `0eb8ed5` | + item 4 (TIME and KILLS) | **78,731** |
+| `d99e225` | + one-picture flash | 78,731 |
+| `69f1d2a` | + docs/CI | 78,731 |
+| `d91ceea` | + doc corrections | 78,731 |
+| `860d5cd` | **TIME dropped, KILLS only** | **78,706** |
+| `2eae04c`, `e787fea` | + step-3 docs | 78,706 |
 
-**What it says, and what it does not.** Every difference between adjacent rows is an **exact whole number of
-fields**: −1, 0, +2, 0, 0, 0, −2, 0 (a field is 17,773 cycles; −1 field over 1000 pictures is −17.78
-cycles/picture on the row). A per-picture cost would grow with the window; these do not. Measured at growing
-windows, ×8 against item 4 gave **+0.00 fields at N=250, +1.00 at N=500, +1.00 at N=1000, +3.00 at N=2000** --
-the total moves in whole fields, not linearly.
+What it says:
 
-So **this measure cannot resolve sub-field per-picture work between these builds.** It shows only that each
-build's window landed on a different whole field. The earlier figures in this document (78,319 → 78,091, and the
-"+354 for item 4" and "+90 for item 5" claims) came from a 25-picture window and are **withdrawn**: they are
-window artefacts, not costs. Item 5's per-frame cost is argued from the draw counter (two calls per boot, zero in
-any measured window), not from this measure.
+* **Item 4's clock cost exactly +25 cycles per picture** (`6fae5b4` -> `0eb8ed5`) and dropping it gave exactly
+  those 25 back (`d91ceea` -> `860d5cd`). That is the `levelTicks++` — an increment on a word, once per pass.
+* **Item 5 costs 0** by this measure (`5b2b4c1` -> `c512619`): the HUD glyph work is not per-frame, which agrees
+  with the draw counter (two calls per boot, zero in any measured window). An earlier claim that item 5 cost
+  "+90 cycles/picture" is **withdrawn** -- it came from a frame-quantised sampler, not from the engine.
+* **Item 2's loader work is 0**: `30d5cd4` and `6fae5b4` are identical, as they must be (loader only).
 
-An independent stepping measurement of `d91ceea` → tip gave 78,727.72 → 78,702.72 (a −25/picture difference);
-this method gives 78,729.76 → 78,694.20 (−35.56). The two differ by a few cycles per picture; the method differs
-in where the window starts, and the difference is within the one-field quantum above.
+**An earlier version of this table was quantised by the emulator's frame, not by the instruction.** It sampled
+`$0200` only after `runFrames(1)`, so every window was a whole number of `frameCycles` -- **17,784**, which is 11
+cycles more than a PAL field (17,773). Its deltas were therefore whole FRAMES: -17,790 and +35,570 are exactly
+-1 and +2 frames. That is what made the figures look like field quanta and made the "+354" and "+90" claims
+plausible; they are artefacts of the sampling, not properties of the game. The figures in this table replace them
+and match an independent instruction-stepping measurement (-25 cycles per picture) exactly.
 
 ## On "stalls depend on host load"
 
@@ -224,9 +223,9 @@ An approximate clock presented as real was ruled out, so the number is dropped r
 kill count is exact**, so it is what the player gets.
 
 No per-frame cost to argue about: the end-screen work in `cue()` runs once, at the instant a level is cleared.
-What removal did to the cycles-per-picture figures is in the table above and is not claimed as a cost -- that
-measure resolves only whole fields. The end screen sits at rows 92/101/110, which do not overlap (`text()`
-writes nine scanlines, and `draw()`'s own "LEVEL CLEAR. ENTER" at y=76 covers 76..84).
+Removing the clock gave back exactly the 25 cycles a picture that adding it cost (see the table above). The end
+screen sits at rows 92/101/110, which do not overlap (`text()` writes nine scanlines, and `draw()`'s own
+"LEVEL CLEAR. ENTER" at y=76 covers 76..84).
 
 Three defects came out of building the row, all measured and all still fixed: `number()` is fixed at three digits
 (so kills printed 009, and `twodigits()` draws two); `text()` writes nine scanlines, so the old 72/80/87 spacing
