@@ -200,10 +200,12 @@ static void cue(byte finish){
  byte i;   /* `back` is already the hidden page: draw() leaves it pointing away from the screen */
  for(i=96;i<120;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
  text(7,92,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
- /* The level's kills, on the end screen. There is no TIME: this engine draws at 11 to 45 pictures a second
-  * depending on how much the renderer and the disk loader have to do, so a clock counted in pictures cannot be
-  * right, and counting real PAL fields would need a field interrupt the engine has no room or structure for.
-  * The kill count is exact, so it is the number the player gets. twodigits() draws it two cells wide. */
+ /* The level's kills, on the end screen. There is no TIME: a picture costs 4.5 to 60 PAL fields depending on how
+  * much the renderer and the disk loader have to do (about 11 pictures a second in a quiet room down to ~1 under
+  * load), so a clock counted in pictures cannot be right. Counting real fields needs a field interrupt: one was
+  * tried (the ROM vector at $FFE0-$FFFF points through the RAM word at $010C, which the engine can own, and the
+  * handler fits in the free space), and that build did not yet reach the game loop. So the time is dropped rather
+  * than shown wrong. The kill count is exact; twodigits() draws it two cells wide. */
  if(finish){text(12,101,"KILLS");twodigits(18,101,kills);}
  text(7,110,"ENTER SKIPS MUSIC");
  /* show what was just drawn: draw()'s own flip (bit 3 clears the low page, bit 2 the high one) */

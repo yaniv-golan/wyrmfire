@@ -92,52 +92,63 @@ the record the entries above refer to; the draw counter is an end-screen count, 
 | `0eb8ed5` | + item 4 (end-screen TIME/KILLS) | 15.63 / 12.96 / **10.40** | 324 / 2566 | 16 / 716, median 47, max 63 | median 38, max 64 | **0** |
 | `7dcb1c1` | + docs only | 15.63 / 12.96 / 10.40 | 324 / 2566 | 16 / 716, median 47, max 63 | median 38, max 64 | 0 |
 
-(These are the SHAs on the branch as pushed: the email rewrite changed every SHA, so `2330b31..7dcb1c1` are the ones to look at.)
+(These are the SHAs on the branch as pushed. The email rewrite changed every SHA, so the range is `594bbbe..2eae04c`; `2330b31` from an earlier draft no longer exists.)
 
-### A real per-frame measure: CPU cycles retired per picture
+### CPU cycles per picture -- and what this measure can and cannot show
 
-The encounter fps and the "end-screen draws" counter both mislead about per-frame cost — the counter is zero by
-construction, and fps moves on phase. **CPU cycles retired per drawn picture** is the quantity that can only move
-if the engine really does more work: measured by stepping the CPU and summing `cpu.cycleCount` over 25 pictures.
+`tools/cycles-per-picture.mjs` steps the machine for **N pictures** and reports `machine.cycle` divided by N.
+Emulation is deterministic, so the same build and window give the same figure to the last digit (checked three
+times). **How a row is measured:** from the game's third drawn picture onward (`$0200` changing marks a picture),
+across **N = 1000** picture boundaries, on a clean build of that commit.
 
-| commit | what | cycles / picture | change |
-|---|---|---|---|
-| `5b2b4c1` | ×8 reclaim | 78,440 | — |
-| `c512619` | + item 5 HUD glyphs | 78,530 | **+90** |
-| `30d5cd4` | + item 2 (`$FD`) | 78,104 | −426 (loader-side only; the engine is unchanged) |
-| `6fae5b4` | + item 2 fix (`$00`) | 78,104 | **0** — the mode fix is invisible, as it must be |
-| `0eb8ed5` | + item 4 | 78,458 | **+354** |
-| `d99e225` | + item 4's clock and one-picture flash | 78,319 | **−139** |
-| `69f1d2a` | + docs/CI | 78,319 | 0 |
-| `860d5cd` | **the clock dropped, KILLS only** | **78,091** | **−228** (the counter and its word are gone) |
+**The figure depends on the window, and that is not noise.** One build, growing windows:
 
-So: item 5 costs about 90 cycles a picture (three `text()` calls when the keys change), item 4's clock about 354
-(the `levelTicks++` and the divide at level clear), and making the flash one picture instead of two gives 139
-back. None of these is anywhere near a field (17,773 cycles), which is why they show as phase in fps and not as
-a rate.
+| N | cycles / picture |
+|---|---|
+| 25 | 78,249.56 |
+| 50 | 78,605.38 |
+| 100 | 78,605.27 |
+| 200 | 78,694.20 |
+| 500 | 78,711.97 |
+| 1000 | 78,729.76 |
 
-What it says:
+Every row below is measured at **N = 1000**, the same window for all, with the committed script:
 
-- **Item 2's fix costs nothing measurable.** `30d5cd4` and `6fae5b4` are identical on every one of the twelve
-  numbers — expected, since the only change is one immediate operand in loader code that runs before the engine.
-- **Item 4 costs nothing per frame.** Its end-screen draws are **0 in every measured window** (all three encounter
-  cases, on every commit), because `cue()` runs once, at the instant a level is cleared, and the harness windows
-  are all mid-level. The spread figure moving 10.71 → 10.40 is a phase change under the amended gate rule, from
-  the two `levelTicks++` in the loop and nothing else; stationary and dodge did not move at all. Note it lands back
-  on ×8's own 10.40, which is the clearest evidence it is a phase artefact rather than a cost.
-- **Route and regions are flat** across the whole branch (resident 320–324 pictures in 2524–2695 fields, regions
-  16 pictures every time, stall median 38–39, max 63–64) — the same band main lives in.
+| commit | what | cycles / picture |
+|---|---|---|
+| `5b2b4c1` | ×8 reclaim | 78,711.98 |
+| `c512619` | + item 5 HUD glyphs | 78,711.99 |
+| `30d5cd4` | + item 2 (`$FD`) | 78,694.20 |
+| `6fae5b4` | + item 2 fix (`$00`) | 78,694.20 |
+| `0eb8ed5` | + item 4 (TIME and KILLS) | 78,729.77 |
+| `d99e225` | + one-picture flash | 78,729.76 |
+| `69f1d2a` | + docs/CI | 78,729.76 |
+| `d91ceea` | + doc corrections | 78,729.76 |
+| `860d5cd` | **TIME dropped, KILLS only** | 78,694.20 |
+| `2eae04c` | + step-3 docs | 78,694.20 |
 
-So the movement is **the extra drawing work**: three `text()` calls, each writing nine scanlines, where there was
-one `number()` call. It is not per-frame, and it is not layout; it is the frame on which the keys change, when the
-HUD is repainted. Stationary improves because that encounter's window ends on a different picture once the field
-takes longer to draw; dodge and spread each lose a little. This is a real, explained cost — not an artefact.
+**What it says, and what it does not.** Every difference between adjacent rows is an **exact whole number of
+fields**: −1, 0, +2, 0, 0, 0, −2, 0 (a field is 17,773 cycles; −1 field over 1000 pictures is −17.78
+cycles/picture on the row). A per-picture cost would grow with the window; these do not. Measured at growing
+windows, ×8 against item 4 gave **+0.00 fields at N=250, +1.00 at N=500, +1.00 at N=1000, +3.00 at N=2000** --
+the total moves in whole fields, not linearly.
+
+So **this measure cannot resolve sub-field per-picture work between these builds.** It shows only that each
+build's window landed on a different whole field. The earlier figures in this document (78,319 → 78,091, and the
+"+354 for item 4" and "+90 for item 5" claims) came from a 25-picture window and are **withdrawn**: they are
+window artefacts, not costs. Item 5's per-frame cost is argued from the draw counter (two calls per boot, zero in
+any measured window), not from this measure.
+
+An independent stepping measurement of `d91ceea` → tip gave 78,727.72 → 78,702.72 (a −25/picture difference);
+this method gives 78,729.76 → 78,694.20 (−35.56). The two differ by a few cycles per picture; the method differs
+in where the window starts, and the difference is within the one-field quantum above.
 
 ## On "stalls depend on host load"
 
-**They do not, and my earlier claim that they did was wrong.** Every harness counts emulated PAL fields (`$0200`
-incremented by the engine's own frame loop -- and note it counts DRAWN PICTURES, about 4.4 per PAL field on
-this engine, not fields); no wall clock is read anywhere in them. Repeated runs of the same
+**They do not, and my earlier claim that they did was wrong.** Every harness counts the engine's own `$0200`,
+which is DRAWN PICTURES, not PAL fields: on this engine a picture costs about **4.4 fields** (measured, 45
+pictures in 4.00 s of PAL time), so `$0200` advances about once per 4.4 fields. No wall clock is read anywhere
+in them. Repeated runs of the same
 binary give identical numbers, including under different machine load. The 40 / 37 / 38 figures came from **three
 different binaries**, not from load: main measures **40**, item 1 measures **38**, and ×8 measures **38** — each
 reproducible. The "37" was a stale `wyrmfire.bin` left in the run directory by an earlier build, so the run I
@@ -198,7 +209,8 @@ wrong:
 * **counting drawn pictures** -- bumped once per pass of the frame loop, divided by a "pictures per second"
   constant. But a picture costs 4.5 fields in a quiet room and the rate swings by more than an order of
   magnitude under load (measured: 13 pictures in 60 frames at the spawn, 1 in 60 under forced zone reloads),
-  so no constant can be right. The first version divided by 50 (the field rate) and read ~11x fast; dividing
+  so no constant can be right. The first version divided by 50 (the field rate) while counting pictures, so it
+read about **4.4x slow** (measured: 113 pictures in 500 fields = 10.0 s of real time, displayed as 2.26 s); dividing
   by a measured 11 was still wrong in any scene busier or quieter than the one it was calibrated in.
 * **counting real PAL fields** -- correct in principle, and eight attempts were made. The 6821 clears the field
   latch only on a read of its DATA register (not a CRB read, not a CRB write -- measured, and a version that
@@ -211,11 +223,10 @@ wrong:
 An approximate clock presented as real was ruled out, so the number is dropped rather than shown wrong. **The
 kill count is exact**, so it is what the player gets.
 
-No per-frame cost, and dropping the clock gave some back: **cycles retired per drawn picture** measured
-78,319 at `d91ceea` (with the time counter in the loop) against **78,091** with it removed -- 228 cycles a
-picture cheaper, because the `levelTicks++` and its word are gone. `cue()` runs once, at the instant a level
-is cleared, and nothing in the loop counts anything for it. The end screen sits at rows 92/101/110, which do not overlap (`text()` writes nine scanlines, and
-`draw()`'s own "LEVEL CLEAR. ENTER" at y=76 covers 76..84).
+No per-frame cost to argue about: the end-screen work in `cue()` runs once, at the instant a level is cleared.
+What removal did to the cycles-per-picture figures is in the table above and is not claimed as a cost -- that
+measure resolves only whole fields. The end screen sits at rows 92/101/110, which do not overlap (`text()`
+writes nine scanlines, and `draw()`'s own "LEVEL CLEAR. ENTER" at y=76 covers 76..84).
 
 Three defects came out of building the row, all measured and all still fixed: `number()` is fixed at three digits
 (so kills printed 009, and `twodigits()` draws two); `text()` writes nine scanlines, so the old 72/80/87 spacing

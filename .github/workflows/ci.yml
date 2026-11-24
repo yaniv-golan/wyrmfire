@@ -158,7 +158,7 @@ jobs:
         run: node test/harness/loader-clear.cjs cloadm build
       - name: HUD key glyphs
         run: node test/harness/hud-keys.cjs cloadm build
-      - name: End screen shows TIME and KILLS
+      - name: End screen shows KILLS (no TIME)
         run: node test/harness/end-screen.cjs cloadm build
       - name: Route harness
         timeout-minutes: 20

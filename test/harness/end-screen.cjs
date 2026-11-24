@@ -1,11 +1,12 @@
 // The LEVEL CLEAR screen shows how many the level cost: "KILLS nn". It does NOT show a time.
 //
-// Why no time: this engine draws 11 to 45 pictures a second depending on how much the renderer and the disk
-// loader are doing, so a clock counted in pictures cannot be right; and counting real PAL fields needs a field
-// interrupt the engine has no space or structure for (the vector lives in ROM and the engine runs I-masked by
-// design). An approximate clock presented as real was ruled out, so the number is dropped rather than shown
-// wrong. This harness therefore asserts the kill count EXACTLY, from the rendered page, and asserts that no
-// TIME text appears anywhere on the screen.
+// Why no time: a picture costs 4.5 to 60 PAL fields depending on how much the renderer and the disk loader are
+// doing (about 11 pictures a second in a quiet room, ~1 under load), so a clock counted in pictures cannot be
+// right. Counting real fields needs a field interrupt: one was tried -- the ROM vector at $FFE0-$FFFF points
+// through the RAM word at $010C, which the engine can own, and the handler fits in the free space -- and that
+// build did not yet reach the game loop. So the time is dropped rather than shown wrong. This harness therefore
+// asserts the kill count EXACTLY, from the rendered page, and asserts that no TIME text appears anywhere on the
+// screen.
 //
 // The engine draws its own 8x9 bitmap glyphs (src/font.h) into the VDG page, so a rendered-frame check means
 // decoding pixels back to characters and comparing with the font -- the same oracle hud-keys.cjs uses.
