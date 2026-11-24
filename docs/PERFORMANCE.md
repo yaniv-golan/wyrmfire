@@ -98,8 +98,9 @@ the record the entries above refer to; the draw counter is an end-screen count, 
 
 `tools/cycles-per-picture.mjs` steps the machine **one instruction at a time** (`runCycles(end, 1)`, which keeps
 the device and event processing) and stops **on the instruction at which `$0200` changed**, so each window boundary
-is the exact cycle of that store. Emulation is deterministic and the boundary is exact, so the figure does not
-depend on the window or the start point.
+is the exact cycle of that store. Emulation is deterministic and the boundary is exact, so the figure is
+independent of the start point; N=250 reads 1.3 cycles/picture higher than N=1000, and the 25-cycle gap between
+builds is the same in every column.
 
 **How a row is measured:** from the picture boundary `--after 3` (the game's fourth picture; the intro tune blocks
 for hundreds of frames first), across **N = 1000** picture boundaries. Stability, measured on two builds at two
@@ -137,10 +138,10 @@ What it says:
 
 **An earlier version of this table was quantised by the emulator's frame, not by the instruction.** It sampled
 `$0200` only after `runFrames(1)`, so every window was a whole number of `frameCycles` -- **17,784**, which is 11
-cycles more than a PAL field (17,773). Its deltas were therefore whole FRAMES: -17,790 and +35,570 are exactly
--1 and +2 frames. That is what made the figures look like field quanta and made the "+354" and "+90" claims
+cycles more than a PAL field (17,773). Its deltas were therefore whole FRAMES: -17,790 and +35,570 are -1 and +2
+frames (to within a few cycles of boundary overshoot -- 6 and 2 cycles respectively). That is what made the figures look like field quanta and made the "+354" and "+90" claims
 plausible; they are artefacts of the sampling, not properties of the game. The figures in this table replace them
-and match an independent instruction-stepping measurement (-25 cycles per picture) exactly.
+and agree with an independent instruction-stepping measurement, which reports the same -25 cycles per picture.
 
 ## On "stalls depend on host load"
 
