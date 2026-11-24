@@ -60,8 +60,11 @@ function launchAddress(buildDir) {
   // 3. the page the loader wrote, and the frame it draws. Park the CPU in `bra .` so the engine cannot start and
   //    nothing else can change the video registers, then let the VDG draw with the loader's own state.
   const cells = Array.from({ length: NCELL }, (_, i) => s.readByte(0x400 + ROW * 32 + COL + i));
-  const shown = cells.map((b) => (b >= 0x41 && b <= 0x5A ? String.fromCharCode(b) : b === 0x60 || b === 0x20 ? ' ' : '.')).join('');
-  assert.equal(shown, TEXT, `the loader wrote ${JSON.stringify(shown)} to the text row, want ${JSON.stringify(TEXT)}`);
+  // Decode ONLY $60 as a space. An ASCII $20 in a cell is a DARK cell on this VDG, not a gap: on a $60 field it
+  // renders as a black block between the words, which is a real defect the loader had. Treating $20 as a space
+  // here would hide exactly that, so $20 decodes to '#' and fails the comparison by name.
+  const shown = cells.map((b) => (b >= 0x41 && b <= 0x5A ? String.fromCharCode(b) : b === 0x60 ? ' ' : b === 0x20 ? '#' : '.')).join('');
+  assert.equal(shown, TEXT, `the loader wrote ${JSON.stringify(shown)} to the text row, want ${JSON.stringify(TEXT)} ('#' = an ASCII $20 cell, a dark block on the field)`);
   s.pokeBytes(PARK, [0x20, 0xFE]);                 // bra .
   cpu.jump(PARK);
   for (let i = 0; i < 4; i++) s.runFrames(1);
