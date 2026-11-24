@@ -78,6 +78,34 @@ So item 5 adds no per-frame work at all: two one-off redraws shift when later pi
 boundaries, which can move a field count either way. Stationary gaining a field and dodge/spread losing one are
 both phase effects of the same two early draws, not a speed difference.
 
+### Per-commit measurement, `28d5ff4` (×8) to the branch tip
+
+Every commit built on its own and measured with the same three encounter cases, plus route and regions. This is
+the record the entries above refer to; the draw counter is an end-screen count, described under item 4 below.
+
+| commit | what it is | stationary / dodge / spread | route resident | route regions | region stall | end-screen draws in window |
+|---|---|---|---|---|---|---|
+| `28d5ff4` | ×8 reclaim | 15.63 / 13.03 / 10.40 | 324 fr / 2563 flds | 16 / 717, median 47, max 63 | median 38, max 64 | 0 |
+| `61e6084` | + item 5 (HUD glyphs) | **15.79 / 12.96 / 10.29** | 323 / 2695 | 16 / 722, median 46, max 63 | median 38, max 64 | 0 |
+| `00a2568` | + item 2, original (`$FD`) | 15.63 / 12.96 / 10.71 | 320 / 2524 | 16 / 710, median 48, max 64 | median 39, max 63 | 0 |
+| `5d681e8` | + item 2 **fix** (`$00`) | **15.63 / 12.96 / 10.71** | **320 / 2524** | **16 / 710, median 48, max 64** | **median 39, max 63** | 0 |
+| `77b9e02` | + item 4 (end-screen TIME/KILLS) | 15.63 / 12.96 / **10.40** | 324 / 2566 | 16 / 716, median 47, max 63 | median 38, max 64 | **0** |
+| `d8787e9` | + docs only | 15.63 / 12.96 / 10.40 | 324 / 2566 | 16 / 716, median 47, max 63 | median 38, max 64 | 0 |
+
+(SHAs are the post-email-rewrite ones; the trees are identical to `2330b31..d8787e9` before it.)
+
+What it says:
+
+- **Item 2's fix costs nothing measurable.** `00a2568` and `5d681e8` are identical on every one of the twelve
+  numbers — expected, since the only change is one immediate operand in loader code that runs before the engine.
+- **Item 4 costs nothing per frame.** Its end-screen draws are **0 in every measured window** (all three encounter
+  cases, on every commit), because `cue()` runs once, at the instant a level is cleared, and the harness windows
+  are all mid-level. The spread figure moving 10.71 → 10.40 is a phase change under the amended gate rule, from
+  the two `levelTicks++` in the loop and nothing else; stationary and dodge did not move at all. Note it lands back
+  on ×8's own 10.40, which is the clearest evidence it is a phase artefact rather than a cost.
+- **Route and regions are flat** across the whole branch (resident 320–324 pictures in 2524–2695 fields, regions
+  16 pictures every time, stall median 38–39, max 63–64) — the same band main lives in.
+
 So the movement is **the extra drawing work**: three `text()` calls, each writing nine scanlines, where there was
 one `number()` call. It is not per-frame, and it is not layout; it is the frame on which the keys change, when the
 HUD is repainted. Stationary improves because that encounter's window ends on a different picture once the field
@@ -130,10 +158,15 @@ The rule is about claims that something is **visible**.
 `levelTicks` counts PAL fields, so the LEVEL CLEAR screen can say how long the level took and how many it cost:
 "TIME mm:ss  KILLS nn". `program_end` $4DEF -> $4EDD, **62 bytes**.
 
-No per-frame cost: the row is drawn once, in `cue()`, on the single frame the level is cleared. The two
-`levelTicks++` in the main loop are the only per-frame addition, and they are an increment on a word. The
-encounter numbers are unchanged from the item-5 entry above (15.63 / 12.96 / 10.40), the same phase figures,
-so nothing here needs the amended gate's second arm.
+No per-frame cost, and the counter shows it: an end-screen draw count taken on every encounter window of every
+commit is **0**, because `cue()` runs once, at the instant a level is cleared, and every measured window is
+mid-level. The two `levelTicks++` in the main loop are the only per-frame addition, and they are an increment on a
+word.
+
+Spread moved 10.71 -> 10.40 on this commit while stationary and dodge did not move at all (15.63 / 12.96 either
+side), and 10.40 is exactly ×8's own baseline figure — which is what a phase artefact looks like: with the draw
+counter at 0, the movement is when pictures land against field boundaries, not extra work. It passes under the
+amended gate rule's second arm. See the per-commit table above for the whole branch.
 
 Three defects came out of building it, all measured: `number()` is fixed at three digits (so mm printed 001 and
 kills 009); `text()` writes nine scanlines, so the old 72/80/87 rows overlapped and `draw()`'s own
