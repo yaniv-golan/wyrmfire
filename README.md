@@ -14,8 +14,8 @@ untested.
 
 No level disk is shipped: you build it from a WAD with the converter, as
 above. `freedoom1.wad` is in the [Freedoom 0.13.0](https://freedoom.github.io)
-zip; the result must have the SHA-256 pinned in
-[`release/expected.json`](release/expected.json).
+zip. For Freedoom E1M1 (and only that map) the result must have the
+SHA-256 pinned in [`release/expected.json`](release/expected.json).
 
 <!-- media: one screenshot and one short GIF, recorded from the Freedoom E1M1 level disk only, go here -->
 

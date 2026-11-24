@@ -235,30 +235,77 @@ test('Freedoom E1M1 converts deterministically and round-trips', { skip: !FREEDO
 
 // ------------------------------------------------------------ player start on a cell edge
 
+// Axis-aligned rooms as closed one-sided loops; only the lumps buildMap reads.
+function roomsLevel(rects, [x, y]) {
+  const v = [], lines = [];
+  for (const [x0, y0, x1, y1] of rects) {
+    const k = v.length; v.push([x0, y0], [x0, y1], [x1, y1], [x1, y0]);
+    for (let i = 0; i < 4; i++) lines.push([k + i, k + (i + 1) % 4]);
+  }
+  return {
+    THINGS: Uint8Array.from([x, y, 90, 1, 7].flatMap(le16)),
+    LINEDEFS: Uint8Array.from(lines.flatMap(([a, b]) => [a, b, 1, 0, 0, 0, 65535].flatMap(le16))),
+    SIDEDEFS: Uint8Array.from(lines.flatMap(() => [...le16(0), ...le16(0), ...name8('-'), ...name8('-'), ...name8('STARTAN3'), ...le16(0)])),
+    VERTEXES: Uint8Array.from(v.flatMap(([px, py]) => [...le16(px), ...le16(py)])),
+  };
+}
+const SQUARE = [0, 0, 256, 256]; // cell centres at -64 + 64k; 0 inside, 256 outside
+const seedOf = (rects, start) => { const m = C.buildMap(roomsLevel(rects, start)); assert.ok(m.grid[m.seed]); return [m.seed % 128, Math.floor(m.seed / 128)]; };
+const refused = (rects, start) => assert.throws(() => C.buildMap(roomsLevel(rects, start)), /player start lies outside the playable map/);
+
 test('a player start whose own cell centre samples outside moves to the nearest playable neighbour', () => {
-  const withStart = (x, y) => makeWad([['PLAYPAL', palette()], ...roomLumps().map(([n, d]) =>
-    [n, n === 'THINGS' ? [...[x, y, 90, 1, 7].flatMap(le16), ...d.slice(10)] : d])]);
-  // (250, 128): its cell centre (256, 128) lies on the east wall, the cell west of it is inside.
-  const m = C.buildMap(new C.Wad(withStart(250, 128)).level('MAP01'));
-  assert.deepEqual([m.seed % 128, Math.floor(m.seed / 128)], [4, 3]);
-  assert.ok(m.grid[m.seed]);
+  // (250, 128): its cell centre (256, 128) lies on the east wall; the cell west of it is inside.
+  assert.deepEqual(seedOf([SQUARE], [250, 128]), [4, 3]);
   // Unchanged when the start's own cell is playable; still refused when nothing near it is.
-  assert.equal(C.buildMap(new C.Wad(withStart(128, 128)).level('MAP01')).seed, 3 * 128 + 3);
-  assert.throws(() => C.buildMap(new C.Wad(withStart(600, 600)).level('MAP01')), /player start lies outside the playable map/);
+  assert.deepEqual(seedOf([SQUARE], [128, 128]), [3, 3]);
+  refused([SQUARE], [600, 600]);
+  // The same through the WAD reader.
+  const wad = makeWad([['PLAYPAL', palette()], ...roomLumps().map(([n, d]) => [n, n === 'THINGS' ? [...[250, 128, 90, 1, 7].flatMap(le16), ...d.slice(10)] : d])]);
+  assert.equal(C.buildMap(new C.Wad(wad).level('MAP01')).seed, 3 * 128 + 4);
+});
+
+test('edge-start fallback: equal distances take the lowest index; diagonal neighbours count', () => {
+  // (250, 160): neighbours (4,3) and (4,4) are both 58,32 away; the lower index (4,3) is diagonal.
+  assert.deepEqual(seedOf([SQUARE], [250, 160]), [4, 3]);
+  // (250, 250): both orthogonal neighbour centres lie on a wall; only the diagonal (4,4) is inside.
+  assert.deepEqual(seedOf([SQUARE], [250, 250]), [4, 4]);
+});
+
+test('edge-start fallback never steps across a one-sided line', () => {
+  // Just outside the outer wall: the inside neighbour is across the wall.
+  refused([SQUARE], [128, 270]);
+  // A sliver room (272-300) holds no cell centre; the big room's cell is across both walls.
+  refused([SQUARE, [272, 0, 300, 256]], [286, 128]);
+  // Beside a void gap (256-320): the west room is across its wall, and the east room's nearest
+  // centres lie exactly on its west wall; touching a wall counts, so neither is taken.
+  refused([SQUARE, [320, 0, 576, 256]], [260, 128]);
+  // A narrow side room next to the main one: its nearest playable centre is across both walls.
+  refused([SQUARE, [258, 0, 270, 192]], [264, 96]);
 });
 
 // ------------------------------------------------------------ command line
 
-test('cli: --help prints a short usage, a missing input is one line and exit 2', async () => {
+test('cli: --help prints a short usage; unreadable inputs are one line and exit 2; other errors are thrown', async () => {
   const { spawnSync } = await import('node:child_process');
+  const os = await import('node:os');
   const cli = new URL('../converter/cli.mjs', import.meta.url).pathname;
-  const help = spawnSync(process.execPath, [cli, '--help'], { encoding: 'utf8' });
+  const run = (...a) => spawnSync(process.execPath, [cli, ...a], { encoding: 'utf8' });
+  const help = run('--help');
   assert.equal(help.status, 0);
   const lines = help.stdout.trim().split('\n');
   assert.ok(lines.length >= 2 && lines.length <= 6, help.stdout);
   assert.match(lines[0], /^usage: /);
-  const missing = spawnSync(process.execPath, [cli, 'no-such-file.wad', '--map', 'E1M1'], { encoding: 'utf8' });
+  const missing = run('no-such-file.wad', '--map', 'E1M1');
   assert.equal(missing.status, 2);
   assert.equal(missing.stderr, 'cli.mjs: cannot read no-such-file.wad: no such file\n');
   assert.equal(missing.stdout, '');
+  const dir = os.tmpdir();
+  const isDir = run(dir);
+  assert.equal(isDir.status, 2);
+  assert.equal(isDir.stderr, `cli.mjs: cannot read ${dir}: is a directory\n`);
+  // An error code the CLI does not map (ENAMETOOLONG) keeps its stack trace and exit code 1.
+  const long = run('x'.repeat(5000) + '.wad');
+  assert.equal(long.status, 1);
+  assert.match(long.stderr, /ENAMETOOLONG/);
+  assert.doesNotMatch(long.stderr, /^cli\.mjs: cannot read/m);
 });

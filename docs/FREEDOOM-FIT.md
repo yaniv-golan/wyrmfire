@@ -54,8 +54,10 @@ header, the disk, the 255-region index, the 104 rows or the 128 columns.
 E1M2, E4M4 and E4M6 used to stop earlier with "player start lies outside
 the playable map": their start sits on a cell edge whose own cell centre
 samples as outside. The converter now moves the start to the playable
-neighbouring cell nearest to it; all three then exceed the object count
-(E4M4 and E4M6 also the disk and the header).
+neighbouring cell nearest to it, if the step there touches no one-sided or
+impassable line (otherwise it still refuses the map). All three then exceed
+the object count and the 3,072-byte header (E1M2 3,204 bytes); E4M4 and
+E4M6 also exceed the disk.
 
 ## Known limit: Doom II-format IWADs
 

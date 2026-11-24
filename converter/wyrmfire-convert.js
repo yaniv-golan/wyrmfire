@@ -383,6 +383,22 @@ export function buildMap(lumps) {
   return m;
 }
 
+// Does the segment (ax,ay)-(bx,by) touch a one-sided or impassable linedef? Integer, closed test.
+function stepBlocked(vs, ls, ax, ay, bx, by) {
+  const orient = (px, py, qx, qy, rx, ry) => Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+  const within = (px, py, qx, qy, rx, ry) => Math.min(px, qx) <= rx && rx <= Math.max(px, qx) && Math.min(py, qy) <= ry && ry <= Math.max(py, qy);
+  for (const [a, b, flags, , , , left] of ls) {
+    if (left !== 65535 && !(flags & 1)) continue;
+    const [cx, cy] = vs[a], [dx, dy] = vs[b];
+    const d1 = orient(cx, cy, dx, dy, ax, ay), d2 = orient(cx, cy, dx, dy, bx, by);
+    const d3 = orient(ax, ay, bx, by, cx, cy), d4 = orient(ax, ay, bx, by, dx, dy);
+    if (d1 * d2 < 0 && d3 * d4 < 0) return true;
+    if ((d1 === 0 && within(cx, cy, dx, dy, ax, ay)) || (d2 === 0 && within(cx, cy, dx, dy, bx, by))
+      || (d3 === 0 && within(ax, ay, bx, by, cx, cy)) || (d4 === 0 && within(ax, ay, bx, by, dx, dy))) return true;
+  }
+  return false;
+}
+
 function buildGrid(lumps, oy, h) {
   const vs = vertexes(lumps.VERTEXES), ls = linedefs(lumps.LINEDEFS), things = thingsOf(lumps.THINGS), sides = sidedefs(lumps.SIDEDEFS);
   if (!ls.length) throw new WadError('map has no linedefs');
@@ -446,13 +462,15 @@ function buildGrid(lumps, oy, h) {
     if (grid[i]) for (const [bit, off] of links) if (!grid[i + off]) grid[i] &= ~bit;
   }
   // A start on a cell edge can sample its own cell centre as outside (Freedoom E1M2): take the
-  // playable neighbour whose centre is nearest the start (lowest index on a tie).
+  // playable neighbour whose centre is nearest the start (lowest index on a tie), provided the
+  // step from the start to that centre touches no one-sided or impassable line.
   let seed = Math.trunc(cell(start[0], start[1]));
   if (seed >= 0 && seed < grid.length && !grid[seed]) {
     let best = -1, bestD = Infinity;
     for (const off of [-129, -128, -127, -1, 1, 127, 128, 129]) {
       const j = seed + off;
       if (j < 0 || j >= grid.length || !grid[j]) continue;
+      if (stepBlocked(vs, ls, start[0], start[1], ox + 32 + 64 * pyMod(j, 128), oy + 32 + 64 * floorDiv(j, 128))) continue;
       const d = (ox + 32 + 64 * pyMod(j, 128) - start[0]) ** 2 + (oy + 32 + 64 * floorDiv(j, 128) - start[1]) ** 2;
       if (d < bestD || (d === bestD && j < best)) { bestD = d; best = j; }
     }
