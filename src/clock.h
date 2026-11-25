@@ -14,7 +14,8 @@
  * counts the field, so no field is counted twice, and every masked stretch polls at least once a field, so none
  * is lost (see readTrackPart for its bound).
  *
- * Why the transfer cannot just take the interrupt: a double-density byte arrives every 32 us, 28.6 CPU cycles,
+ * Why the transfer cannot just take the interrupt: a double-density byte arrives every 32 us, 28.4 CPU cycles
+ * (the PAL Dragon's CPU runs at 14.218 MHz / 16 = 888.6 kHz),
  * and the IRQ entry and RTI alone cost 34. A byte read late sets Lost Data, the WD2797 raises no DRQ for the rest
  * of the command, and the unrolled DRQ waits in readTrackPart (which test DRQ only) spin for ever. That was the
  * earlier build that never reached the game loop. */
@@ -39,10 +40,18 @@ asm void clockField(){
 @off rts
  }
 }
+/* The IRQ line is shared: PIA0's two sides and, on the Dragon 64, the 6551 ACIA. Only the field-sync flag (CRB
+ * bit 7) counts a field; anything else is acknowledged -- a PORT A read clears PIA0's HS flag, a STATUS read clears
+ * the ACIA's -- and not counted, so a stray source can neither hold IRQ down nor run the clock fast. */
 static asm void fieldIrq(){
  asm {
+    lda $ff03
+    bpl @other
     lda $ff02
     lbsr _clockField
+    rti
+@other lda $ff00
+    lda $ff05
     rti
  }
 }

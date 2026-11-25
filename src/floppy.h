@@ -5,13 +5,16 @@ static byte *transfer,*transferEnd;
 /* IRQ is masked for the whole call: an interrupt taken while a byte waits loses it (clock.h). The field flag is
  * polled in @wait instead, and Y counts the fields seen; they are added to the clock at the end, still masked.
  *
- * The bound that keeps the poll from costing a byte: a byte must be read within 28.6 cycles of its DRQ. @wait
+ * The bound that keeps the poll from costing a byte: a byte must be read within 28.4 cycles of its DRQ (32 us at
+ * 888.6 kHz). @wait
  * reads the status at S1..S4, never more than 17 cycles apart (S1->S2 16, S2->S1 16, S1->S3 16, S3->S4 13,
  * S4->S1 17), and a DRQ seen is read 9 cycles later, so the worst first byte is read 26 cycles after its DRQ
- * (the loop without the poll: 25). The poll runs only while @wait is still waiting for a DRQ, which it always
- * is in the gap before each sector's data: so the longest stretch without a poll is one sector's 256 bytes
- * (8.2 ms) and the gaps round it, well inside a field (20 ms), and the one-deep flag never has to hold two. A
- * flag set during the last sector is still set at the PULS CC, and the interrupt takes it there.
+ * (the loop without the poll: 25), 2.4 cycles inside the limit. The poll runs on every pass of @wait that finds no
+ * DRQ: through the whole search for the first sector, through every gap between sectors, and at each sixteen-byte
+ * boundary inside a sector whenever the CPU gets there before the next byte. So at least once per sector, and the
+ * longest stretch without a poll is one sector's 256 bytes (8.2 ms), well inside a field (20 ms): the one-deep
+ * flag never has to hold two. A flag set during the last sector is still set at the PULS CC, and the interrupt
+ * takes it there. test/harness/clock.cjs measures the sample spacing and forces the S3/S4 phases.
  *
  * The fields seen go to the clock in one add at @end, not a clockField() call each: @end runs in the gap before
  * the next part's sector, which diskRead only just catches, and a loop of calls (about ten after a whole track)

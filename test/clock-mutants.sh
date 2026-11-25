@@ -7,6 +7,11 @@
 #              transfer beyond the one the flag holds are lost, so the clock runs slow.
 #   unmask  -- readTrackPart leaves IRQ unmasked: the interrupt delays a byte, the WD2797 flags Lost Data and
 #              stops raising DRQ, and the unrolled DRQ waits spin for ever (the build that never reached the game).
+#   d0c     -- @d0c (a byte due just after the flag was cleared) no longer counts that field: the forced-phase run
+#              reaches @d0c and the clock comes up short of the flag events.
+#   s4slow  -- four cycles more on the S4->S1 path of the poll: the status reads are 21 cycles apart, past the bound
+#              that keeps a poll from costing a byte.
+#   nosource -- fieldIrq counts every IRQ, not only field sync: with PIA0's HS interrupt on, the clock runs fast.
 set -eu
 cloadm=$(CDPATH='' cd -- "$1" && pwd); vdk=$(CDPATH='' cd -- "$(dirname "$2")" && pwd)/$(basename "$2")
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
@@ -29,4 +34,7 @@ EOF
 }
 mutant poll floppy.h '   lda <$03\n   bmi @fs\n' '' 'the clock counted'
 mutant unmask floppy.h '   orcc #$50\n   ldy #0\n' '   ldy #0\n' 'no picture'
+mutant d0c floppy.h '@d0c lda <$43\n   sta ,x+\n   leay 1,y\n' '@d0c lda <$43\n   sta ,x+\n' 'the clock counted'
+mutant s4slow floppy.h '   leay 1,y\n   bra @wait\n' '   leay 1,y\n   nop\n   nop\n   bra @wait\n' 'cycles apart'
+mutant nosource clock.h '    lda $ff03\n    bpl @other\n' '' 'a non-FS interrupt was counted'
 echo 'all clock mutants killed'

@@ -4,6 +4,8 @@
  * RAM: engine $1C00-$4FFF, ASSETS $5000-$6DFF, PACK $6E00-$79FF,
  * AREA $7A00-$ABFF (unpacked region; compressed region read to its top),
  * GRID $AC00-$DFFF (up to 104 rows of 128 cells), screens $0400/$E000.
+ * Low RAM: $010C-$010E the IRQ's JMP to fieldIrq (clock.h), $0200-$0207 the picture markers the harnesses
+ * read, $0208-$0387 the renderer's column cache (scene.h; zeroed by main, as it is not in the loaded image).
  *
  * HGR2 level pack (WYRMFIRE.LVL): a 12-sector header at logical sector 30
  * read to PACK, then sector-aligned LZ regions at the absolute sectors in
