@@ -357,6 +357,7 @@ int main(){
  IO(0xffca)=0;IO(0xffcc)=0;IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;
  IO(0xff03)=0x30;IO(0xff02)=255;IO(0xff03)=0x34;IO(0xff01)=0x30;IO(0xff00)=0;IO(0xff01)=0x34;
  installClock();
+ clearSignatures();
  clearScreen((byte*)0x400);clearScreen((byte*)0xe000);back=(byte*)0xe000;
  health=100;ammo=50;
  back=(byte*)0x400;text(8,82,"READING LEVEL DISK");

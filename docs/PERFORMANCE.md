@@ -83,9 +83,12 @@ both phase effects of the same two early draws, not a speed difference.
 - **Bought:** the end screen's TIME, counted from real PAL fields and exact across disk loads (details and the
   root cause of the earlier attempt under item 4 below).
 - **Cost:** a real per-frame cost, so the amended gate's phase arm does **not** cover it: the field interrupt takes
-  ~84 cycles a field, **+375 cycles a picture** (78,706 → 79,081). Encounter **15.63 / 12.96 / 10.40 → 15.66 /
-  12.96 / 10.29** (spread one field over its window); region loads +1.2% in sum, stall median 38 → 39, max 63
-  unchanged; `program_end` $4E60 → $4FA8 (+328 bytes, 88 left below ASSETS at $5000).
+  ~84 cycles a field, **+341 cycles a picture** (78,706 → 79,047). Encounter **15.63 / 12.96 / 10.40 → 15.63 /
+  12.96 / 10.29** (spread one field over its window); region loads +1.0% in sum, stall median 38, max 63 → 62.
+  Bytes: the clock adds 328, and moving the renderer's column cache to low RAM gives back 344, so `program_end`
+  $4E60 → **$4E50**. That is what lets `claude/freedoom-credits` (+384 bytes, `program_end` $4FE0 on its own)
+  merge with this: a trial merge builds to $4FD0, 48 bytes below ASSETS, and passes its credits harness and
+  the clock, end-screen, encounter, HUD, swap and smoke checks.
 - **Needs a waiver from the PM** under the rule above: fps ≥ baseline fails on spread. The task was approved by the
   owner; this entry records the measured price, it does not accept it.
 
@@ -137,7 +140,7 @@ identical in all four columns**.)
 | `d91ceea` | + doc corrections | 78,731 |
 | `860d5cd` | **TIME dropped, KILLS only** | **78,706** |
 | `2eae04c`, `e787fea` | + step-3 docs | 78,706 |
-| `claude/irq-clock` | **+ field-sync clock (TIME back)** | **79,081** |
+| `claude/irq-clock` | **+ field-sync clock (TIME back), column cache in low RAM** | **79,047** |
 
 What it says:
 
@@ -262,15 +265,16 @@ disk reads did not change that". Its source is not in the history, so the cause 
 
 | measure | main (`91abee6`) | clock |
 |---|---|---|
-| cycles / picture (`cycles-per-picture.mjs`, N=1000, after 3 and after 50) | 78,706 | **79,081** (+375, +0.48%) |
-| encounter stationary / dodge / spread | 15.63 / 12.96 / 10.40 | 15.66 / 12.96 / 10.29 |
-| route: region changes | 16 frames, 710 fields, median 48, max 64 | 16 frames, 715 fields, median 46, max 63 |
-| route: campaign clear | 337 pictures, 3654 fields | 337 pictures, 3667 fields |
-| regions: load fields, sum over 149 | 6,095 | 6,167 (+1.2%) |
-| regions: stall | median 38, max 63 | median 39, max 63 |
-| `program_end` / binary | $4E60 / 9,783 bytes | $4FA8 / 10,084 bytes |
+| cycles / picture (`cycles-per-picture.mjs`, N=1000) | 78,706 | **79,047** (+341, +0.43%) |
+| encounter stationary / dodge / spread | 15.63 / 12.96 / 10.40 | 15.63 / 12.96 / 10.29 |
+| route: region changes | 16 frames, 710 fields, median 48, max 64 | 16 frames, 728 fields, median 45, max 63 |
+| route: campaign clear | 337 pictures, 3654 fields | 340 pictures, 3712 fields |
+| regions: load fields, sum over 149 | 6,095 | 6,155 (+1.0%) |
+| regions: stall | median 38, max 63 | median 38, max 62 |
+| `program_end` / binary | $4E60 / 9,783 bytes | $4E50 / 10,111 bytes |
 
-The +375 cycles a picture is the interrupt: ~84 cycles a field, 4.45 fields a picture. The region loads show no
+The cost is the interrupt: ~84 cycles a field, 4.45 fields a picture, about 375 cycles a picture; the column
+cache's new address takes about 34 of them back (measured 79,081 before the move). The region loads show no
 lost revolution at a part boundary (the WD2797's own command log is identical: 149 `$98`, 134 `$9A`, 75 seeks, no
 error status); what remains is rotational phase -- a load that started just in time for its sector on main and
 starts 0.5% later here waits a revolution, and the reverse also happens (11 of 283 reads differ by more than half
@@ -280,7 +284,7 @@ a revolution, both ways).
 
 * `test/harness/clock.cjs`: counts every falling FS edge CLOADM drives onto PIA0 CB1 and requires the clock to
   advance by exactly that many over 500 quiet fields and then a load of every region (149) -- measured 7,593 of
-  7,593, with 2,763 of them falling inside a masked transfer. Both ends are sampled where IRQ is unmasked and the
+  7,593, with 2,763 of them falling inside a masked transfer (7,583 of 7,583 after the column-cache move). Both ends are sampled where IRQ is unmasked and the
   flag is clear, so nothing is pending.
 * `test/clock-mutants.sh`: the poll removed from `readTrackPart()` ("the clock counted 5207 of 7613 fields") and
   the transfer left unmasked ("no picture; PC 33ea", the original hang). Each must fail the harness by name.
