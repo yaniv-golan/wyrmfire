@@ -21,19 +21,23 @@ const sym=boot.symbols(files.map);
  put('things',x+6,y+(test==='spread'?-1:0),3,8,x+6,y+1,3,8);
  put('waitForAttack',test==='spread'?150:0,150);
  if(test==='spread'){put('gun',1);put('ownedShotgun',1);put('shells',8);}
- let fired=false,overlap=false,cast=false,shot=false,frames=[],lastHeading=0,shotAt=-1;
- // item 1: the VDG's colour-set bit (CSS, $FF22 bit 3 -- 1 normal, 0 inverted for the hit flash) and whether
- // SND_HURT is the sound in flight, sampled once per picture, so "flashes exactly one picture" can be asserted.
- const cssSeq=[],hurtSeq=[];
+ let fired=false,overlap=false,cast=false,shot=false,frames=[],lastHeading=0;
  // SND_HURT is ASSET 17 (src/disk.h). The table holds OFFSETS from ASSETS (0x5000), not addresses
  // (src/disk.h: ASSET(i) = ASSETS + offsets[i]), so the asset's start is ASSETS + offset.
  const ASSETS=0x5000, assetOff=(i)=>read(ASSETS+8+i*4)*256+read(ASSETS+8+i*4+1), assetLen=(i)=>read(ASSETS+8+i*4+2)*256+read(ASSETS+8+i*4+3);
  const hurtAddr=ASSETS+assetOff(17), hurtEnd=hurtAddr+assetLen(17);
+ // item 1: the VDG's colour-set bit (CSS, $FF22 bit 3 -- 1 normal, 0 inverted for the hit flash), the impact
+ // count, and whether SND_HURT is the sound in flight, sampled EXACTLY at each picture boundary: at the
+ // instruction after the one that stored $0200 (pcWatch runs before every instruction). They used to be sampled
+ // once per emulator frame, which depends on where the frame boundary falls inside the main loop -- draw() writes
+ // CSS before its $0200 store, and the next pass's simulate() may run before the frame ends -- so a few cycles a
+ // picture anywhere in the engine (the field clock's interrupt is about 375) moved the flash by one sample. These
+ // samples cannot move.
+ const exact=[];let lastPicture=read(512);
+ s.machine.pcWatch=()=>{const v=read(512);if(v===lastPicture)return;lastPicture=v;
+  const ap=word('audioPos');exact.push({css:(s.machine.pia1.b.outValue()>>3)&1,impacts:val('impacts'),hurt:ap>=hurtAddr&&ap<hurtEnd});};
  for(let i=0;i<65;i++){
   const fields=next();if(i>2)frames.push(fields);
-  // the flash is written inside draw(), which is inside this picture; sample the LIVE output value
-  cssSeq.push(((s.machine.pia1.b.outValue()>>3)&1));
-  {const ap=word('audioPos');hurtSeq.push(ap>=hurtAddr&&ap<hurtEnd);}   // in flight, not merely at its start
   if(val('wind')&&!cast){cast=true;fs.writeFileSync(path.join(dir,'casting.png'),framePng(s.machine.render()));}
   if(val('thrown')&&!fired){fired=true;if(test==='dodge')s.machine.setKey('X',true);}
   if(fired&&test==='dodge'&&Math.abs(word('py')-(256*y+128))>=256)s.machine.setKey('X',false);
@@ -43,11 +47,7 @@ const sym=boot.symbols(files.map);
   if(shot&&word('audioPos')&&val('angle')!==lastHeading)overlap=true;
   lastHeading=val('angle');
   if(test==='stationary'&&val('impacts')){
-    /* the impact is counted in simulate(); the flash is drawn on the draw() of the NEXT picture. Sample that one
-     * and the one after, so "exactly one picture inverted, then back" can be asserted on real pictures. */
-    shotAt=cssSeq.length;
-    for(let k=0;k<3;k++){next();cssSeq.push((s.machine.pia1.b.outValue()>>3)&1);
-      {const ap=word('audioPos');hurtSeq.push(ap>=hurtAddr&&ap<hurtEnd);}}
+    for(let k=0;k<3;k++)next();   // the flash picture and the ones after it, for the exact samples
     break;
   }
   if(test==='dodge'&&fired&&(!read(sym.balls+8)||val('wallHits')))break;
@@ -55,17 +55,18 @@ const sym=boot.symbols(files.map);
  }
  const hp=val('health'),n=frames.length,elapsed=frames.reduce((a,b)=>a+b,0);
  console.log(JSON.stringify({test,fixture:[x,y],cast,fired,hp,impacts:val('impacts'),wallHits:val('wallHits'),strafe:word('py')-(256*y+128),spreadVictims:val('spreadVictims'),controlDuringAudio:overlap,frames:n,fields:elapsed,fps:+(50*n/elapsed).toFixed(2)}));
+ s.machine.pcWatch=null;
  if(test==='stationary'){
     assert(cast&&fired&&hp===92);
-    // ITEM 1: a hit inverts the colour set for exactly ONE picture, and SND_HURT is what is playing on it.
-    // css is 1 normally and 0 while the flash is up; count the pictures where it is 0.
-    const flashed=cssSeq.map((c,i)=>c===0?i:-1).filter(i=>i>=0);
-    assert.equal(flashed.length,1,`the border flash lasted ${flashed.length} pictures (${flashed.join(',')}), want exactly 1`);
-    /* measured behaviour (from the real engine): the picture the impact is counted on still has CSS=1, the NEXT
-     * one has CSS=0, and the one after has it back. So the flash is the picture after the last ordinary one. */
-    assert.equal(flashed[0],shotAt,`the flash was on picture ${flashed[0]}, want the first picture after the impact (index ${shotAt})`);
-    assert.equal(cssSeq[shotAt+1],1,'the colour set was still inverted one picture after the flash');
-    assert.ok(hurtSeq[shotAt],`SND_HURT was not the sound in flight on the flash picture (index ${shotAt}); audioPos=$`+word('audioPos').toString(16)+` want $`+hurtAddr.toString(16));
+    /* ITEM 1, at the exact picture boundaries (see `exact`): the impact is counted in simulate() and the SAME
+     * pass's draw() shows the flash, so the first picture that ends with impacts>0 is the one picture with CSS=0;
+     * the next has CSS=1 back, and SND_HURT is in flight on the flash picture. */
+     const hitAt=exact.findIndex(p=>p.impacts>0),flash=exact.map((p,i)=>p.css===0?i:-1).filter(i=>i>=0);
+     if(process.env.ENCOUNTER_VERBOSE)console.log(JSON.stringify({hitAt,flash,around:exact.slice(Math.max(0,hitAt-2),hitAt+3)}));
+     assert.ok(hitAt>=0,'no picture ended with the impact counted');
+     assert.deepEqual(flash,[hitAt],`at the picture boundaries the flash was on pictures [${flash}], want exactly [${hitAt}], the picture the impact was counted in`);
+     assert.equal(exact[hitAt+1]&&exact[hitAt+1].css,1,'the colour set was still inverted one picture after the flash');
+     assert.ok(exact[hitAt].hurt,'SND_HURT was not the sound in flight on the flash picture');
   }
  if(test==='dodge')assert(cast&&fired&&hp===100&&Math.abs(word('py')-(256*y+128))>=256);
  if(test==='spread')assert(shot&&val('spreadVictims')===2&&overlap);
