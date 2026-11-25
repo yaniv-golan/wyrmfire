@@ -170,6 +170,16 @@ test('in-place unpack rule and region placement', () => {
   assert.equal(end, 868);
 });
 
+test('FREEDOOM_COPYING is third_party/freedoom/COPYING.adoc verbatim', () => {
+  assert.equal(C.FREEDOOM_COPYING, fs.readFileSync(new URL('../third_party/freedoom/COPYING.adoc', import.meta.url), 'utf8'));
+});
+
+test('CREDITS.TXT placement skips the directory tracks and refuses a full disk', () => {
+  const text = 'x'.repeat(3 * 256 + 10);
+  assert.deepEqual(C.placeCredits(text, 574).map(([s0, b]) => [s0, b.length]), [[574, 512], [594, 266]]);
+  assert.equal(C.placeCredits(text, 80 * 36 - 2), null);
+});
+
 test('VDK holds the level and asset files at their fixed sectors', () => {
   const lvl = Uint8Array.from({ length: 4 * 256 }, (_, i) => i & 255), dat = Uint8Array.from({ length: 999 }, (_, i) => (i * 3) & 255);
   const tail = Uint8Array.from({ length: 300 * 256 }, (_, i) => (i * 7) & 255);
@@ -231,6 +241,34 @@ test('Freedoom E1M1 converts deterministically and round-trips', { skip: !FREEDO
   assert.equal(assets.guard.length, 96);
   assert.equal(assets.shotgun.length, 360);
   assert.ok(assets.snd_fire.length > 0 && assets.introNotes.length % 3 === 0);
+});
+
+test('credit lines for the engine: Freedoom lines, else a neutral line; NUL-terminated, in the engine font', () => {
+  const lines = (d) => new TextDecoder().decode(Uint8Array.from(d)).split('\0').slice(0, -1);
+  assert.deepEqual(lines(C.creditData(true)), ['LEVEL DATA: FREEDOOM (BSD)', 'MODIFIED FOR THE DRAGON 64']);
+  assert.deepEqual(lines(C.creditData(false)), ['LEVEL DATA: YOUR OWN WAD']);
+  assert.equal(C.ENTRY_NAMES.at(-1), 'credits');
+});
+
+test('the asset block credits Freedoom only for a Freedoom WAD; any other WAD gets the neutral line and no CREDITS.TXT', { skip: !FREEDOOM1 && 'set FREEDOOM1' }, () => {
+  const wad = freedoom(), other = new Uint8Array(wad.length + 1); other.set(wad); // one trailing byte: a valid WAD that is not Freedoom
+  const f = C.convert(wad, { map: 'E1M1' }), o = C.convert(other, { map: 'E1M1' });
+  const credit = (disk) => new TextDecoder().decode(C.parseAssets(C.readVdk(disk)['WYRMFIRE.DAT']).credits);
+  assert.equal(credit(f.disk), 'LEVEL DATA: FREEDOOM (BSD)\0MODIFIED FOR THE DRAGON 64\0');
+  assert.equal(credit(o.disk), 'LEVEL DATA: YOUR OWN WAD\0');
+  assert.equal(o.info.credits, null);
+  assert.deepEqual(Object.keys(C.readVdk(o.disk)), ['WYRMFIRE.DAT', 'WYRMFIRE.LVL']);
+});
+
+test('a Freedoom level disk carries CREDITS.TXT: credit, modified note, trademark line, verbatim licence', { skip: !FREEDOOM1 && 'set FREEDOOM1' }, () => {
+  const { disk, info } = C.convert(freedoom(), { map: 'E1M1' });
+  const text = new TextDecoder().decode(C.readVdk(disk)['CREDITS.TXT']);
+  assert.equal(info.credits, new TextEncoder().encode(text).length);
+  assert.equal(text, C.creditsText('Freedoom Phase 1 0.13.0', 'freedoom1.wad', 'E1M1'));
+  assert.match(text, /^WYRMFIRE level data is converted from Freedoom \(https:\/\/freedoom\.github\.io\), Copyright © 2001-2024 Contributors to the Freedoom project, used under the BSD 3-Clause licence/m);
+  assert.match(text, /^Modified: /m);
+  assert.match(text, /not affiliated with or endorsed by id Software, ZeniMax Media or Microsoft/);
+  assert.ok(text.endsWith(fs.readFileSync(new URL('../third_party/freedoom/COPYING.adoc', import.meta.url), 'utf8')));
 });
 
 // ------------------------------------------------------------ player start on a cell edge

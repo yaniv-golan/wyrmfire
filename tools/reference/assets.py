@@ -22,7 +22,19 @@ FACES = [('marine', 'STFST01'), ('wounded', 'STFST31')]
 CUES = [('intro', 'D_E1M1', 1), ('inter', 'D_INTER', 0), ('victory', 'D_VICTOR', 1)]
 SOUNDS = [('fire', 'DSPISTOL'), ('blast', 'DSSHOTGN'), ('door', 'DSDOROPN'), ('hurt', 'DSPLPAIN'), ('pickup', 'DSITEMUP')]
 ENTRY_NAMES = ([n for n, *_ in SPRITES] + [n for n, _ in FACES] + [n + 'Notes' for n, *_ in CUES] +
-               ['snd_' + n for n, _ in SOUNDS])
+               ['snd_' + n for n, _ in SOUNDS] + ['credits'])
+
+# Level-data lines for the engine's credits screen (each NUL-terminated).
+CREDIT_LINES = {'freedoom': ['LEVEL DATA: FREEDOOM (BSD)', 'MODIFIED FOR THE DRAGON 64'], 'other': ['LEVEL DATA: YOUR OWN WAD']}
+
+
+def credit_data(freedoom):
+    out = []
+    for line in CREDIT_LINES['freedoom' if freedoom else 'other']:
+        if len(line) > 32 or any(not 32 <= ord(c) <= 90 for c in line):
+            raise ValueError('credit line does not fit the engine font: ' + line)
+        out += [ord(c) for c in line] + [0]
+    return out
 
 
 def sprite(wad, lump, width, height):
@@ -67,13 +79,14 @@ def sound(data):
     return out
 
 
-def build(wad):
+def build(wad, freedoom=False):
     from music import melody
     entries = []
     for name, lump, w, h in SPRITES: entries.append(sprite(wad, lump, w, h))
     for name, lump in FACES: entries.append(face(wad, lump))
     for name, lump, ch in CUES: entries.append(melody(wad.lump(lump), ch, 320))
     for name, lump in SOUNDS: entries.append(sound(wad.lump(lump)))
+    entries.append(credit_data(freedoom))
     table = bytearray(); body = bytearray(); base = 8 + 4 * len(entries)
     for e in entries:
         table += struct.pack('>HH', base + len(body), len(e)); body += bytes(e)

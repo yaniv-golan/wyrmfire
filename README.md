@@ -38,6 +38,7 @@ double-sided drive; this is untested.
 | 1 / 2 / 3 | Fist / pistol / shotgun |
 | D | Toggle wall hatching |
 | Enter | Skip a cue; restart after death or exit |
+| C (on the title) | Credits: the level disk's credit, then the engine's; Enter continues |
 
 ## Making a level disk
 
@@ -67,7 +68,9 @@ converter is deterministic. A map that exceeds a level-pack limit fails with a
 `LimitError` that names the limit; nothing is silently cropped (see
 [docs/FREEDOOM-FIT.md](docs/FREEDOOM-FIT.md)). The disk holds `WYRMFIRE.DAT`
 (HGA1 assets, sector 0) and `WYRMFIRE.LVL` (HGR2 level pack, header at
-sector 30, regions after it, skipping the directory tracks).
+sector 30, regions after it, skipping the directory tracks) and, on a Freedoom
+disk, `CREDITS.TXT` (the credit, a note that the data is modified and
+Freedoom's licence) when it fits.
 Formats: [docs/FORMATS.md](docs/FORMATS.md).
 
 ## How it works
@@ -137,6 +140,7 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     node test/harness/clock.cjs cloadm run                                    # level clock counts every field, loads included
     node test/harness/end-screen.cjs cloadm run                               # TIME mm:ss and KILLS on the level clear
     sh test/clock-mutants.sh cloadm run/wyrmfire.vdk                          # clock mutants must fail (needs CMOC + LWTOOLS)
+    node test/harness/credits.cjs cloadm run                                  # credits screen (Freedoom disk) and its mutant
 
 Level disks converted from id Software WADs stay on your machine: never
 commit or upload them.
@@ -166,9 +170,16 @@ from source alone.
   checks against `release/expected.json`; it is kept only as a CI artifact.
   See [CREDITS.md](CREDITS.md) and [LICENSES/freedoom.txt](LICENSES/freedoom.txt).
 - Tests run on Freedoom only. No id WAD is used in CI.
+- Contributing: never commit a commercial WAD or anything converted from one
+  ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Licence
 
-WYRMFIRE is GPL-3.0-or-later ([LICENSE](LICENSE)). Freedoom data in a
-level disk you convert from it is BSD-3-Clause ([LICENSES/freedoom.txt](LICENSES/freedoom.txt)).
-WYRMFIRE is not affiliated with id Software or the Freedoom project.
+WYRMFIRE is GPL-3.0-or-later ([LICENSE](LICENSE)).
+
+WYRMFIRE level data is converted from Freedoom (https://freedoom.github.io), Copyright © 2001-2024 Contributors to the Freedoom project, used under the BSD 3-Clause licence (full text: third_party/freedoom/COPYING.adoc). The data has been modified for the Dragon 64. The Freedoom project does not endorse CLOADM or WYRMFIRE.
+
+DOOM is a registered trademark of ZeniMax Media Inc. CLOADM and WYRMFIRE are independent projects, not affiliated with or endorsed by id Software, ZeniMax Media or Microsoft. References to DOOM describe file compatibility only.
+
+Freedoom's licence, credits and version note are in
+[`third_party/freedoom/`](third_party/freedoom). See also [CREDITS.md](CREDITS.md).

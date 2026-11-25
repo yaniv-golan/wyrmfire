@@ -162,6 +162,8 @@ jobs:
         run: node test/harness/end-screen.cjs cloadm build
       - name: Level clock counts every field, disk transfers included
         run: node test/harness/clock.cjs cloadm build --verbose
+      - name: Credits screen (C on the title) shows the Freedoom line; a mutant without it fails
+        run: node test/harness/credits.cjs cloadm build
       - name: Route harness
         timeout-minutes: 20
         run: ONE_LEVEL=1 node test/harness/route.cjs cloadm build

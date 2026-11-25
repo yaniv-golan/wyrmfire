@@ -1,0 +1,16 @@
+Freedoom 0.13.0
+
+COPYING.adoc, CREDITS and CREDITS-MUSIC are verbatim copies from the
+Freedoom source repository at tag v0.13.0:
+
+  https://github.com/freedoom/freedoom/tree/v0.13.0
+  tag object 8cecc3642861dfb71839984c886d5576fa120d49
+  commit     cfb8644b1a8dc7d7d2177e6a892ccaa2922bdaae
+
+The 0.13.0 tag has no CREDITS-LEVELS file; level authors are listed in
+CREDITS. The level data WYRMFIRE converts comes from freedoom1.wad in the
+release zip, pinned by SHA-256 in tools/versions.env:
+
+  https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
+
+Licence notes: see README in this directory.
