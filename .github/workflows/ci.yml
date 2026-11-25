@@ -160,6 +160,8 @@ jobs:
         run: node test/harness/hud-keys.cjs cloadm build
       - name: End screen shows KILLS (no TIME)
         run: node test/harness/end-screen.cjs cloadm build
+      - name: Credits screen (C on the title) shows the Freedoom line; a mutant without it fails
+        run: node test/harness/credits.cjs cloadm build
       - name: Route harness
         timeout-minutes: 20
         run: ONE_LEVEL=1 node test/harness/route.cjs cloadm build

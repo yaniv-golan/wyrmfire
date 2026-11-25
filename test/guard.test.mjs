@@ -22,7 +22,7 @@ const run = (d) => spawnSync(process.execPath, [scan, d], { encoding: 'utf8' });
 const j = (...p) => p.join('');
 
 test('clean repository passes', () => {
-  const r = run(repo({ 'README.md': 'WYRMFIRE loads Doom-format WADs such as DOOM1.WAD.\n', 'LICENSES/freedoom-CREDITS.txt': j('origin', 'ally by someone <a', '@b.org>\n') }));
+  const r = run(repo({ 'README.md': 'WYRMFIRE loads Doom-format WADs such as DOOM1.WAD.\n', 'LICENSES/freedoom-CREDITS.txt': j('origin', 'ally by someone <a', '@b.org>\n'), 'third_party/freedoom/CREDITS': j('Someone <c', '@d.org>\n') }));
   assert.equal(r.status, 0, r.stdout + r.stderr);
 });
 
@@ -30,6 +30,8 @@ for (const [name, files, re] of [
   ['IWAD header', { 'data/x.bin': Buffer.concat([Buffer.from('IWAD'), Buffer.alloc(8)]) }, /WAD header/],
   ['WAD directory inside a file', { 'misc/blob.bin': Buffer.concat([Buffer.alloc(16), Buffer.from('E1M1\0\0\0\0'), Buffer.alloc(8), Buffer.from('THINGS\0\0')]) }, /WAD directory/],
   ['level-data file type', { 'level.vdk': 'x' }, /level-data/],
+  ['renamed level disk', { 'misc/e1m1.img': Buffer.concat([Buffer.from('dk'), Buffer.alloc(10), Buffer.from('HGA1'), Buffer.alloc(8000)]) }, /converted level data/],
+  ['bare level pack', { 'misc/pack.dat': Buffer.concat([Buffer.from('HGR2'), Buffer.alloc(64)]) }, /converted level data/],
   ['forbidden word', { 'docs/a.md': j('the Han', 'gar engine\n') }, /forbidden word/],
   ['engine says doom', { 'src/x.c': 'char *t = "DOOM";\n' }, /engine/],
   ['e-mail', { 'a.txt': j('mail someone', '@example.com\n') }, /e-mail/],

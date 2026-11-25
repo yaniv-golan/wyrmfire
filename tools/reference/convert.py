@@ -17,6 +17,7 @@ from atlas import build as build_atlas
 from levelpack import pack_level, HEADER_SECTOR
 from assets import build as build_assets, ASSET_SECTOR, ENTRY_NAMES
 from disk import build_vdk
+from credits import FREEDOOM_RELEASES, credits_text, place_credits
 
 
 def convert(wad_bytes, map_name='E1M1'):
@@ -26,8 +27,12 @@ def convert(wad_bytes, map_name='E1M1'):
     records, floors = prepare(lumps, m['ox'], m['oy'], m['grid'])
     atlas = build_atlas(records, m['grid'], floors)
     extents, lv = pack_level(m, atlas)
-    assets, sizes = build_assets(wad)
-    disk = build_vdk([('WYRMFIRE', 'DAT', [(ASSET_SECTOR, assets)]), ('WYRMFIRE', 'LVL', extents)])
+    freedoom = FREEDOOM_RELEASES.get(hashlib.sha256(wad_bytes).hexdigest())
+    assets, sizes = build_assets(wad, bool(freedoom))
+    files = [('WYRMFIRE', 'DAT', [(ASSET_SECTOR, assets)]), ('WYRMFIRE', 'LVL', extents)]
+    credits = place_credits(credits_text(freedoom[1], freedoom[0], map_name.upper()), lv['end']) if freedoom else None
+    if credits: files.append(('CREDITS', 'TXT', credits))
+    disk = build_vdk(files)
     zones = atlas['zones']
     info = {
         'map': map_name.upper(),
@@ -47,6 +52,7 @@ def convert(wad_bytes, map_name='E1M1'):
         'levelBytes': sum(len(b) for _, b in extents),
         'lastSector': lv['end'],
         'assetBytes': len(assets),
+        'credits': (sum(len(b) for _, b in credits) if credits else 'does not fit') if freedoom else None,
         'assetSizes': dict(zip(ENTRY_NAMES, sizes)),
         'diskBytes': len(disk),
         'sha256': hashlib.sha256(disk).hexdigest(),

@@ -9,10 +9,12 @@
 //   - WAD data: a file starting with IWAD/PWAD, or holding a WAD directory
 //     signature (PLAYPAL or E1M1/MAP01 marker followed by THINGS);
 //   - files of level-data types (.wad .vdk .lvl .lmp .lzh .lha .zip .exe);
+//   - converter output under any name: a VDK holding an HGA1 asset block at
+//     sector 0 or an HGR2 level pack at sector 30, or a bare HGA1/HGR2 block;
 //   - forbidden words (WORDS below; Freedoom's verbatim credits excepted),
 //     and "doom" inside the engine (src/, bin/);
 //   - e-mail addresses other than the allowed GitHub noreply author and the
-//     third-party credits under LICENSES/;
+//     third-party credits (LICENSES/freedoom-*, third_party/freedoom/);
 //   - AI-session links or trailers (SESSION below).
 // The patterns are assembled from pieces so this file does not match itself.
 import { execFileSync } from 'node:child_process';
@@ -21,7 +23,7 @@ const [repo] = process.argv.slice(2);
 if (!repo) { console.error('usage: scan.mjs REPO'); process.exit(2); }
 const git = (...a) => execFileSync('git', ['-C', repo, ...a], { maxBuffer: 1 << 30 });
 const ALLOWED_EMAILS = new Set(['5079117+yaniv-golan@users.noreply.github.com']);
-const THIRD_PARTY = /^LICENSES\/freedoom-/;
+const THIRD_PARTY = /^(LICENSES\/freedoom-|third_party\/freedoom\/)/;
 const LEVEL_EXT = /\.(wad|vdk|lvl|lmp|lzh|lha|zip|exe)$/i;
 const w = (...p) => new RegExp(p.join(''), 'i');
 const WORDS = [w('han', 'gar'), w('port', ' of'), w('origin', 'ally')];
@@ -34,6 +36,8 @@ function scanBytes(where, path, bytes) {
   const head = bytes.subarray(0, 4).toString('latin1');
   if (head === 'IWAD' || head === 'PWAD') add(where, 'starts with a WAD header');
   const raw = bytes.toString('latin1');
+  const at = (o, m) => bytes.length >= o + 4 && bytes.subarray(o, o + 4).toString('latin1') === m;
+  if (at(0, 'HGA1') || at(0, 'HGR2') || at(12, 'HGA1') || at(12 + 30 * 256, 'HGR2')) add(where, 'converted level data (HGA1/HGR2)');
   if (/PLAYPAL\0/.test(raw) || /(E\dM\d|MAP\d\d)\0{3,4}[\s\S]{8}THINGS\0\0/.test(raw)) add(where, 'contains a WAD directory signature');
   if (/\0/.test(raw.slice(0, 8000)) && !/\.(bin|sym)$/.test(path)) return; // other binaries: header checks only
   const text = raw;

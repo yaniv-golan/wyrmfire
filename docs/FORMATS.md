@@ -13,6 +13,7 @@ Directory copies on tracks 16 and 20 (logical sectors 576-593 and 720-737).
 |---|---|---|
 | `WYRMFIRE.DAT` | 0-29 | HGA1 asset block (≤ 7,680 bytes) |
 | `WYRMFIRE.LVL` | 30-41, then regions from 42 | HGR2 level pack; its directory entry lists one extent per run between directory tracks |
+| `CREDITS.TXT` | from the sector after the last region | Freedoom disks only: the Freedoom credit, a note that the data is modified, the trademark line and Freedoom's `COPYING.adoc` verbatim (UTF-8, LF, about 2.5 KB). Written only if it fits; `info.credits` gives its size, `"does not fit"`, or `null` for a non-Freedoom WAD. The engine does not read it |
 
 ## Engine RAM map
 
@@ -61,14 +62,17 @@ flags), one entry per 3.75° of view angle.
 | 0 | 4 | `HGA1` |
 | 4 | 2 | total length (≤ 7,680; read to `$5000`) |
 | 6 | 2 | 16-bit sum of bytes 8 .. length−1 |
-| 8 | 19 × 4 | (offset, length) of each entry |
+| 8 | 20 × 4 | (offset, length) of each entry |
 
 Entries, in order: sprites `guard`, `imp`, `impCast`, `fireball`, `boss`
 (16 px wide; mask/ink byte pairs), `fist`, `weapon`, `flash`, `shotgun`
 (40 px); faces `marine`, `wounded` (24 × 25, 1 bit); cues `introNotes`,
 `interNotes`, `victoryNotes` (phase-high, phase-low, ticks triples ending
 0,0,0); sounds `snd_fire`, `snd_blast`, `snd_door`, `snd_hurt`, `snd_pickup`
-(4 kHz 6-bit DAC samples).
+(4 kHz 6-bit DAC samples); `credits`, the level disk's lines for the
+engine's credits screen (each NUL-terminated, ≤ 32 characters, codes 32-90):
+`LEVEL DATA: FREEDOOM (BSD)` and `MODIFIED FOR THE DRAGON 64` for a
+Freedoom WAD (identified by SHA-256), else `LEVEL DATA: YOUR OWN WAD`.
 
 ## LZ
 
