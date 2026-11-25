@@ -78,6 +78,40 @@ So item 5 adds no per-frame work at all: two one-off redraws shift when later pi
 boundaries, which can move a field count either way. Stationary gaining a field and dodge/spread losing one are
 both phase effects of the same two early draws, not a speed difference.
 
+### Field-sync level clock (TIME back on the end screen, costs 0.48% of the CPU) — **ACCEPTED** (2026-11-25)
+
+- **Bought:** the end screen's TIME, counted from real PAL fields and exact across disk loads (details and the
+  root cause of the earlier attempt under item 4 below).
+- **Cost, at the merged head** (main `775ec6c` merged, review fixes in): a real per-frame cost, so the amended
+  gate's phase arm does **not** cover it. The field interrupt takes ~85 cycles a field (8 of them the source
+  check), **+376 cycles a picture** (78,706 → 79,082, **+0.48%**). Encounter against main as it now is: **15.63 /
+  12.96 / 10.71 → 15.63 / 12.14 / 10.29**; regions stall median 38, max 64 → 63. `program_end` **$4FDC**, 36
+  bytes below ASSETS at $5000 (main with the credits screen alone: $4FE0). The clock's code is 328 bytes, the
+  source check 12 more; moving the renderer's column cache to low RAM gave back 344, which is what let the
+  credits screen and the clock fit together.
+  (Before the merge, at `ae892ba`: +341 cycles a picture, 79,047, +0.43%; encounter against main `91abee6`
+  15.63 / 12.96 / 10.40 → 15.63 / 12.96 / 10.29; `program_end` $4E50.)
+- **Waiver granted by the owner, 2026-11-25**, relayed by the PM: fps ≥ baseline fails on spread (10.71 → 10.29
+  against main `775ec6c`, confirmed by the owner for the merged head; first granted as 10.40 → 10.29 against
+  `91abee6`) and the clock is a real per-frame cost (+0.48% cycles, +0.43% before the merge), so the phase arm
+  does not cover it; the waiver does.
+  **The baseline numbers stay exactly as they are** -- this entry records the exception, it does not fold the new
+  figures into a baseline.
+- **After merging main `775ec6c` (freedoom-credits) and the review fixes -- dodge, accepted 2026-11-25.** Measured
+  against main as it now is (15.63 / 12.96 / **10.71**; the credits merge itself moved spread from 10.40), the
+  clock build reads **15.63 / 12.14 / 10.29**. Dodge 12.96 → 12.14 was not covered by the first waiver (granted
+  for spread); the owner accepted it on 2026-11-25 (below). It is not disk and not the handler's work: the
+  WD2797's read log in the dodge run is identical, the handler's non-field-sync branch never runs, and the
+  steady-state cost of the fixes is +36 cycles a picture
+  (79,046 → 79,082, the source check). What changes is the dodge itself: the player strafes 320 sub-cells instead
+  of 256 (X is seen for one more picture), ends a step further along and renders a different view, 173 fields for
+  the same 42 pictures instead of 162. The merge without the fixes reads 162, and so do these variants of it:
+  +4 or +8 cycles of padding in the handler (after or before the flag clear), and 12 dead bytes giving the fixed
+  build's layout. So the step needs the new handler's timing and its layout together; it is an input-phase step in
+  the scenario, not a cost per picture. Restoring 12.96 would mean dropping the source check (review item 4).
+  **Accepted by the owner, 2026-11-25**, relayed by the PM: the waiver above is extended to dodge 12.96 → 12.14,
+  and the source check stays. The baselines stay unrestated.
+
 ### Per-commit measurement, `5b2b4c1` (×8) to the branch tip
 
 Every commit built on its own and measured with the same three encounter cases, plus route and regions. This is
@@ -126,6 +160,8 @@ identical in all four columns**.)
 | `d91ceea` | + doc corrections | 78,731 |
 | `860d5cd` | **TIME dropped, KILLS only** | **78,706** |
 | `2eae04c`, `e787fea` | + step-3 docs | 78,706 |
+| `ae892ba` | **+ field-sync clock (TIME back), column cache in low RAM** (before the credits merge) | **79,047** |
+| `claude/irq-clock` head | + main `775ec6c` (credits) merged, review fixes (IRQ source check) | **79,082** |
 
 What it says:
 
@@ -198,40 +234,104 @@ still invisible.
 Reading RAM is still right where the thing under test *is* memory (the loader's cleared page, the packed map).
 The rule is about claims that something is **visible**.
 
-### The end screen's KILLS (item 4, and why there is no TIME)
+### The end screen's TIME and KILLS (item 4)
 
-The LEVEL CLEAR screen says how many the level cost: "KILLS nn". `program_end` $4DEF -> $4E60: **113 bytes**,
-which is 125 fewer than the TIME version it replaces ($4EDD).
+The LEVEL CLEAR screen says how long the level took and how many it cost: "TIME mm:ss  KILLS nn" on row 101,
+columns 6..25. The time is real PAL fields, counted from the VDG's field sync (`src/clock.h`); the kill count is
+exact. The clock starts when `readLevel()` has the level in play and stops in `use()` the moment the exit is used;
+past 99 minutes it reads 99:59.
 
-**There is no time, and that is a ruling, not an omission.** The clock went through two designs and both were
-wrong:
+#### Why the earlier interrupt build never reached the game loop
 
-* **counting drawn pictures** -- bumped once per pass of the frame loop, divided by a "pictures per second"
-  constant. But a picture costs 4.5 fields in a quiet room and the rate swings by more than an order of
-  magnitude under load (measured: 13 pictures in 60 frames at the spawn, 1 in 60 under forced zone reloads),
-  so no constant can be right. The first version divided by 50 (the field rate) while counting pictures, so it
-read about **4.4x slow** (measured: 113 pictures in 500 fields = 10.0 s of real time, displayed as 2.26 s); dividing
-  by a measured 11 was still wrong in any scene busier or quieter than the one it was calibrated in.
-* **counting real PAL fields** -- correct in principle, and eight attempts were made. The 6821 clears the field
-  latch only on a read of its DATA register (not a CRB read, not a CRB write -- measured, and a version that
-  wrote CRB counted 7x high). Polling it missed fields whenever the engine went longer than a field (17,773
-  cycles) without a poll: best placement reached 0.86x. An FS interrupt handler installs (the ROM vector at
-  $FFE0-$FFFF points through a RAM word at $010C, which the engine can own) but the engine then never draws a
-  picture at all -- 0 in 2000 frames against 95 for the build without it -- and masking the disk reads did not
-  change that, so the cause is not the transfer. That is a separate item, not solved here.
+It was dropped as "the FS interrupt handler installs but the engine then never draws a picture, and masking the
+disk reads did not change that". Its source is not in the history, so the cause was found on a reconstruction
+(vector at `$010C`, PIA0 CRB bit 0, `ANDCC #$EF`), run in CLOADM at the pinned commit:
 
-An approximate clock presented as real was ruled out, so the number is dropped rather than shown wrong. **The
-kill count is exact**, so it is what the player gets.
+* **Installed before the first `loadAssets()`**: no picture. The PC sits at `$3335`, the `@w14` DRQ wait in
+  `readTrackPart()`, for ever. The WD2797's status goes `$05` (busy + **Lost Data**) two fields after the IRQ is
+  enabled, with X at `$50FE` (byte 254 of the first sector), and then `$14` (Record Not Found + Lost Data, not
+  busy) once the multi-sector command runs off the track. The interrupt keeps counting all the while.
+* **Installed after `readLevel()`** (so the first loads run masked): it boots, then `regions.cjs` stops at the
+  first region stream with "no picture; PC 3307" -- the same wait.
+* **The mechanism.** A double-density byte arrives every 32 us, 28.4 CPU cycles (888.6 kHz); the IRQ entry and RTI alone
+  cost 34, so an interrupt taken while a byte waits loses it. After Lost Data the WD raises no DRQ for the rest of
+  the command (CLOADM's `wd17xx.js` `setDrq`, as MAME), and the fifteen unrolled waits in `readTrackPart()` test DRQ
+  only -- not BUSY, no timeout -- so the CPU spins there. That is a hang inside `loadAssets()`, which is why it
+  looked like the engine stuck in the load/`waitForDisk()` path.
+* **Masking the transfer does work**, contrary to the old note: `PSHS CC; ORCC #$50` round `readTrackPart()`
+  boots. But it loses time: 918 of 1000 fields counted from boot, because a masked multi-sector read lasts many
+  fields and the PIA's flag holds one.
+* The vector is not the problem: the SAM serves `$FFF8` from the firmware's `$BFF8` even in the all-RAM map, and
+  CLOADM's firmware points it at `$010C` as Dragon BASIC does (`sam.js` `read()`, `stub.js`).
 
-No per-frame cost to argue about: the end-screen work in `cue()` runs once, at the instant a level is cleared.
-Removing the clock gave back exactly the 25 cycles a picture that adding it cost (see the table above). The end
-screen sits at rows 92/101/110, which do not overlap (`text()` writes nine scanlines, and `draw()`'s own
-"LEVEL CLEAR. ENTER" at y=76 covers 76..84).
+#### The design
 
-Three defects came out of building the row, all measured and all still fixed: `number()` is fixed at three digits
-(so kills printed 009, and `twodigits()` draws two); `text()` writes nine scanlines, so the old 72/80/87 spacing
-overlapped itself and the draw() band; and `cue()` drew to the page that was already on screen without flipping
-the SAM, so the row was correct in RAM while the player saw the other page.
+* `fieldIrq()` (vector `$010C`): reads `$FF02`, which is what clears the flag, and calls `clockField()`. About 84
+  cycles a field.
+* `readTrackPart()` holds IRQ masked for the whole call and polls the flag in its first-DRQ wait. The poll is
+  placed so the status is never sampled more than 17 cycles apart, so a first byte is read at most 26 cycles after
+  its DRQ (the loop without the poll: 25; the limit is 28.4, so 2.4 cycles of margin). A flag seen while a byte is due is left for the next
+  visit. The wait always runs in the gap before each sector's data, so the longest stretch without a poll is one
+  sector (8.2 ms) plus its gaps, inside one field. Y counts the fields seen, and they are added to the clock in one
+  add at the end. (A first version called `clockField()` once per field there: about ten calls after a whole
+  track, enough that `diskRead()` missed the next part's sector by a revolution -- measured as reads that waited
+  0.1 field on main and 10.1 here; the single add put those back.)
+* `tune()` holds IRQ masked, so the interrupt does not break up the waveform, and polls the flag once a tick
+  (57 waves, about 7 ms), outside the wave loop. The clock is stopped whenever a cue plays today, so this only
+  keeps the invariant.
+* Everything else runs with IRQ enabled. The engine keeps DP at 0 outside `readTrackPart()` and does no stack
+  tricks, so the interrupt is safe anywhere else.
+
+#### What it costs
+
+| measure | main (`91abee6`) | clock (`ae892ba`) | main (`775ec6c`, credits) | clock + main + review fixes |
+|---|---|---|---|---|
+| cycles / picture (`cycles-per-picture.mjs`, N=1000) | 78,706 | **79,047** (+341, +0.43%) | 78,706 | **79,082** (+376, +0.48%) |
+| encounter stationary / dodge / spread | 15.63 / 12.96 / 10.40 | 15.63 / 12.96 / 10.29 | 15.63 / 12.96 / 10.71 | 15.63 / **12.14** / 10.29 |
+| route: region changes | 16 frames, 710 fields, median 48, max 64 | 16 frames, 728 fields, median 45, max 63 | 16 frames, 714 fields, median 48, max 64 | 16 frames, 723 fields, median 49, max 63 |
+| route: campaign clear | 337 pictures, 3654 fields | 340 pictures, 3712 fields | 336 pictures, 3651 fields | 338 pictures, 3708 fields |
+| regions: load fields, sum over 149 | 6,095 | 6,155 (+1.0%) | -- | -- |
+| regions: load median / max; stall median / max | 44 / 68; 38 / 63 | 45 / 68; 38 / 62 | 45 / 69; 38 / 64 | 45 / 67; 38 / 63 |
+| `program_end` / binary | $4E60 / 9,783 bytes | $4E50 / 10,111 bytes | $4FE0 / 10,109 bytes | **$4FDC** (36 bytes below $5000) / 10,432 bytes |
+
+(Dodge in the last column: see the exception entry above -- an input-phase step in that scenario, not a cost;
+accepted by the owner on 2026-11-25.)
+
+The cost is the interrupt: ~84 cycles a field, 4.45 fields a picture, about 375 cycles a picture; the column
+cache's new address takes about 34 of them back (measured 79,081 before the move). The region loads show no
+lost revolution at a part boundary (the WD2797's own command log is identical: 149 `$98`, 134 `$9A`, 75 seeks, no
+error status); what remains is rotational phase -- a load that started just in time for its sector on main and
+starts 0.5% later here waits a revolution, and the reverse also happens (11 of 283 reads differ by more than half
+a revolution, both ways).
+
+#### How it is tested
+
+* `test/harness/clock.cjs`: counts every falling FS edge CLOADM drives onto PIA0 CB1 and requires the clock to
+  advance by exactly that many over 500 quiet fields and then a load of every region (149) -- after the merge
+  7,557 of 7,557, 3,071 inside a masked transfer -- with no edge ever finding the flag still set. Both ends are
+  sampled where IRQ is unmasked and the flag is clear, so nothing is pending. Then three more checks:
+  **spacing** -- every status read `readTrackPart()` makes is timed by the emulator, and two in a row with no data
+  read between them are at most 17 cycles apart (measured 17); **stray IRQs** -- PIA0's HS interrupt is enabled for
+  50 fields and the clock still counts only field sync (50 of 50) while the engine still draws (2 pictures: the
+  HS interrupt comes every 57 cycles and takes most of the CPU), then an interrupt is raised in CLOADM's 6551
+  each field for 20 fields (20 of 20, 6 pictures, the 6551's interrupt cleared) -- a handler that does not
+  acknowledge either source runs back to back and draws nothing; the engine never programs the 6551 itself, so
+  that case rests on CLOADM's model of it; **forced phase** -- a field flag is injected at every poll over 24 region
+  loads, so the `@fs` path runs back to back and a DRQ lands in every part of it: every flag event counted (103,667
+  of 103,667 in the latest run), every read clean, `@d0c` reached 8 times (a natural run reaches it about once in
+  150 loads).
+* `test/clock-mutants.sh`, seven mutants, each failing the harness by name: the poll removed ("the clock counted
+  5210 of 7557 fields"); the transfer left unmasked ("no picture", the original hang); `@d0c` not counting its
+  field ("the clock counted 7556 of 7557"); four cycles more on the S4->S1 path ("status reads were 21 cycles
+  apart"); the handler counting every IRQ ("with HS IRQ on, the clock counted 10538 for 50 fields"); no PIA0 port A
+  read ("no picture drawn in the 50 fields with HS IRQ on"); no 6551 status read ("0 pictures in the 20 fields and
+  its interrupt still pending").
+* `test/harness/end-screen.cjs`: the row decoded from the rendered page must read exactly the time the clock
+  stopped at, at 01:03, 59:59 and past 99 minutes (99:59), with the kills; the clock must be stopped on the end
+  screen.
+
+The two older designs stay ruled out: counting drawn pictures (a picture costs 4.5 to 60 fields) and polling the
+flag from the main loop (it misses fields whenever the loop goes a field without a poll; best placement 0.86x).
 
 ## Harness audit (item 2's follow-up): every claim of "visible"
 
@@ -241,10 +341,10 @@ Each harness that asserts something is on the screen, whether it reads the rende
 | harness | assertion | blind? | state |
 |---|---|---|---|
 | `loading-controls.cjs` | the loader's controls are on the loading screen | **was blind** (`screenText`) | **fixed**: rendered-frame glyph check + mode byte + SAM base |
-| `end-screen.cjs` | KILLS is on the level-clear screen, and no TIME is | no | frame glyphs decoded from the page the SAM shows, at two kill counts; asserts no "TIME" and no mm:ss anywhere in the end-screen band |
+| `end-screen.cjs` | TIME and KILLS are on the level-clear screen | no | frame glyphs decoded from the page the SAM shows, at three clock values and kill counts; the row must equal the time the clock stopped at |
 | `hud-keys.cjs` | the HUD's KEY field shows one glyph per key | no | reads the page as glyph rows via `font.h`, and matches against both pages because `back` alternates |
 | `loader-clear.cjs` | the loader cleared $0400-$05FF | no (not a visibility claim) | reads memory at the loader's `jmp image_start`; the thing under test IS the RAM |
-| `encounter.cjs` | behaviour, plus the hit flash is exactly one picture and SND_HURT plays | no visibility claim | reads the colour-set bit the VDG decodes and `audioPos`, per picture |
+| `encounter.cjs` | behaviour, plus the hit flash is exactly one picture and SND_HURT plays | no visibility claim | reads the colour-set bit the VDG decodes and `audioPos` at each exact picture boundary |
 | `regions.cjs`, `route.cjs`, `media.cjs`, `profile.cjs` | behaviour and timing | no visibility claim | read engine RAM counters (hp, kills, `$0200`), never text-as-visible |
 | `swap.cjs` | the replacement disk's spawn is read | no (not a visibility claim) | reads `px`/`py` from RAM |
 
@@ -255,15 +355,19 @@ measured:
 
 * **It lasted two pictures.** `hurtFlash=2` and the decrement runs *before* `simulate()` on the following pass, so 2
   survived into a second `draw()`. It is 1 now, which covers exactly the picture the hit is drawn on.
-* **The sample point matters.** The impact is counted in `simulate()`; the flash is drawn by the `draw()` of the
-  NEXT picture. Measured on the real engine: the impact picture has CSS=1, the next has CSS=0, the one after has it
-  back. Anyone sampling only up to the impact picture sees no flash at all — which is what made this look broken.
+* **The sample point matters.** The impact is counted in `simulate()` and the same pass's `draw()` shows the
+  flash. This bullet used to say the flash came on the NEXT picture; that was the per-frame sampler, not the
+  engine. Sampled at the exact picture boundary (the instruction after the `$0200` store), main and the clock build
+  agree: picture 33 is the first that ends with the impact counted, it is the one picture with CSS=0, and 34 has
+  it back. A frame boundary can fall between `draw()`'s CSS write and its `$0200` store, so a per-frame sample
+  could show the flash one picture early or late, and the clock's 375 cycles a picture moved it by one.
 
-`encounter.cjs` asserts the colour set is inverted on exactly one picture, that it is the picture after the
-impact, and that `audioPos` lies inside the SND_HURT asset on it. The asset table holds **offsets from $5000**, not
-addresses (`src/disk.h` `ASSET(i)`), so the check adds them. Mutants fail by name: `hurtFlash=2` ("the border
-flash lasted 2 pictures (33,34), want exactly 1") and the SND_HURT call removed ("SND_HURT was not the sound in
-flight ... audioPos=$0").
+`encounter.cjs` asserts, at the exact picture boundaries, that the colour set is inverted on exactly one picture,
+that it is the picture the impact was counted in, and that `audioPos` lies inside the SND_HURT asset on it. The
+asset table holds **offsets from $5000**, not addresses (`src/disk.h` `ASSET(i)`), so the check adds them. Mutants
+fail by name (re-measured with the exact samples): `hurtFlash=2` ("the flash was on pictures [33,34], want exactly
+[33]"), the flash removed ("on pictures [], want exactly [33]") and the SND_HURT call removed ("SND_HURT was not
+the sound in flight on the flash picture").
 
 **Cost:** +0 bytes; the cycles measure above shows `d99e225` (this plus the clock fix) is 139 cycles per picture
 *cheaper* than `0eb8ed5`, because a second inverted picture costs a picture.

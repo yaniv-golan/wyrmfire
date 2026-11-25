@@ -2,9 +2,28 @@
  * page FF; the user may retry a missing or wrong disk without losing the game. */
 static byte diskTrack=255,diskSide,diskSector,diskError;
 static byte *transfer,*transferEnd;
+/* IRQ is masked for the whole call: an interrupt taken while a byte waits loses it (clock.h). The field flag is
+ * polled in @wait instead, and Y counts the fields seen; they are added to the clock at the end, still masked.
+ *
+ * The bound that keeps the poll from costing a byte: a byte must be read within 28.4 cycles of its DRQ (32 us at
+ * 888.6 kHz). @wait
+ * reads the status at S1..S4, never more than 17 cycles apart (S1->S2 16, S2->S1 16, S1->S3 16, S3->S4 13,
+ * S4->S1 17), and a DRQ seen is read 9 cycles later, so the worst first byte is read 26 cycles after its DRQ
+ * (the loop without the poll: 25), 2.4 cycles inside the limit. The poll runs on every pass of @wait that finds no
+ * DRQ: through the whole search for the first sector, through every gap between sectors, and at each sixteen-byte
+ * boundary inside a sector whenever the CPU gets there before the next byte. So at least once per sector, and the
+ * longest stretch without a poll is one sector's 256 bytes (8.2 ms), well inside a field (20 ms): the one-deep
+ * flag never has to hold two. A flag set during the last sector is still set at the PULS CC, and the interrupt
+ * takes it there. test/harness/clock.cjs measures the sample spacing and forces the S3/S4 phases.
+ *
+ * The fields seen go to the clock in one add at @end, not a clockField() call each: @end runs in the gap before
+ * the next part's sector, which diskRead only just catches, and a loop of calls (about ten after a whole track)
+ * made it miss that sector by a revolution (measured). */
 static asm void readTrackPart(){
  asm {
-   pshs dp,u,y
+   pshs cc,dp,u,y
+   orcc #$50
+   ldy #0
    lda #$ff
    tfr a,dp
    ldx _transfer
@@ -25,12 +44,30 @@ static asm void readTrackPart(){
 @wait lda <$40
    bita #2
    bne @d0
+   lda <$03
+   bmi @fs
+   lda <$40
+   bita #2
+   bne @d0
    anda #5
    cmpa #1
    beq @wait
    bita #2
    bne @d0
    lbra @bad
+@fs lda <$40
+   bita #2
+   bne @d0
+   lda <$02
+   lda <$40
+   bita #2
+   bne @d0c
+   leay 1,y
+   bra @wait
+@d0c lda <$43
+   sta ,x+
+   leay 1,y
+   bra @w1
 @d0
    lda <$43
    sta ,x+
@@ -117,7 +154,20 @@ static asm void readTrackPart(){
    sta _diskError
    lda #$d0
    sta <$40
-@end puls y,u,dp,pc
+@end tfr y,d
+   tst _clockOn
+   beq @none
+   addb _clockTicks
+   adca #0
+@sec subd #FIELD_HZ
+   bcs @keep
+   ldx _clockSeconds
+   leax 1,x
+   stx _clockSeconds
+   bra @sec
+@keep addd #FIELD_HZ
+   stb _clockTicks
+@none puls y,u,dp,cc,pc
 @ok rts
 
  }

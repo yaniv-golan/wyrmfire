@@ -76,7 +76,14 @@ static byte loadArea(byte zone){
  unpackTarget=AREA;length=(word)(AREA+rawSize[zone-1]);decompress();
  currentArea=zone;loadFailure=0;return 1;
 }
-static byte oldSignature[2][32][6],doorVis[32],wallTop[32],wallBottom[32];
+/* The column cache, oldSignature[page][col][6] as it was, (2 pages x 32 columns x 6 bytes = 384), lives in low RAM at $0208-$0387, not
+ * in the engine image: nothing writes $0208-$03FF while the engine runs (measured: over 3,000 fields of play the
+ * only CPU writes below $0400 are the $0200-$0207 markers), and the 384 bytes are what lets the field clock and
+ * the credits screen both fit below ASSETS at $5000. Low RAM is not part of the loaded image, so main() zeroes
+ * it before the first picture (clearSignatures). */
+#define SIGNATURES ((byte*)0x208)
+static void clearSignatures(){word i;for(i=0;i<384;i++)SIGNATURES[i]=0;}
+static byte doorVis[32],wallTop[32],wallBottom[32];
 static const byte *view,*adjacent;
 static byte blendWeight;
 static byte angularIndex,sampled[4];
@@ -197,7 +204,7 @@ static void scene(){
  adjacent=0;
  if(blendWeight>8&&areaAt(otherX,otherY)==currentArea&&cross(x,y,otherX,otherY))adjacent=viewAt(otherX,otherY);
 
- sig=oldSignature[page][0];dirty=dirtyCols[page];
+ sig=page?SIGNATURES+192:SIGNATURES;dirty=dirtyCols[page];
  for(col=0;col<32;col++,sig+=6,dirty++){
     int k=(int)start+rayOffset[col];audioSlice();
     if(k<0)k+=96;else if(k>=96)k-=96;j=(byte)k;

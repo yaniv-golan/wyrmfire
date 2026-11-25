@@ -10,6 +10,7 @@ typedef unsigned int word;
 #include "font.h"
 #define IO(a) (*(byte*)(a))
 #define GRID ((byte*)0xac00)
+#include "clock.h"
 typedef struct {byte x,y,kind,hp;} Thing;
 static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
@@ -144,6 +145,9 @@ static asm void audioSlice(){
 static byte musicOn=1,creditsWanted;
 static void tune(const byte *score){
  if(!musicOn)return;
+ /* IRQ is held for the cue so the field interrupt cannot break up the waveform; FS is polled once a tick (57
+  * waves, about 7 ms) at the end of the asm below, so the clock loses no field (clock.h). */
+ irqHold();
  while(score[2]){
     word inc=((word)score[0]<<8)+score[1];byte ticks=score[2];score+=3;
     IO(0xff02)=254;if(!(IO(0xff00)&64))break;
@@ -164,11 +168,16 @@ static void tune(const byte *score){
        bne @wait
        leax -1,x
        bne @wave
-       puls y,u
+       lda $ff03
+       bpl @nofs
+       lda $ff02
+       lbsr _clockField
+@nofs  puls y,u
      }
     }
  }
  IO(0xff20)=128;
+ irqRelease();
 }
 static byte key(byte coln,byte row){IO(0xff02)=~(1<<coln);return !(IO(0xff00)&row);}
 static byte *at(byte x,byte y){return GRID+((word)y<<7)+x;}
@@ -201,13 +210,12 @@ static void cue(byte finish){
  byte i;   /* `back` is already the hidden page: draw() leaves it pointing away from the screen */
  for(i=96;i<120;i++){byte j;for(j=3;j<29;j++)back[(word)i*32+j]=0;}
  text(7,92,finish?"LEVEL CLEAR":"LEVEL COMPLETE");
- /* The level's kills, on the end screen. There is no TIME: a picture costs 4.5 to 60 PAL fields depending on how
-  * much the renderer and the disk loader have to do (about 11 pictures a second in a quiet room down to ~1 under
-  * load), so a clock counted in pictures cannot be right. Counting real fields needs a field interrupt: one was
-  * tried (the ROM vector at $FFE0-$FFFF points through the RAM word at $010C, which the engine can own, and the
-  * handler fits in the free space), and that build did not yet reach the game loop. So the time is dropped rather
-  * than shown wrong. The kill count is exact; twodigits() draws it two cells wide. */
- if(finish){text(12,101,"KILLS");twodigits(18,101,kills);}
+ /* The level's time and kills. The time is real PAL fields from the field-sync interrupt (clock.h), stopped by
+  * use() the moment the exit is used; mm:ss, minutes held at 99:59 past 99 minutes. The kill count is exact.
+  * "TIME mm:ss  KILLS nn" is 20 cells, centred: columns 6..25. */
+ if(finish){word secs=clockSeconds;byte mm=99,ss=59;if(secs<6000){mm=(byte)(secs/60);ss=(byte)(secs%60);}
+   text(6,101,"TIME");twodigits(11,101,mm);text(13,101,":");twodigits(14,101,ss);
+   text(18,101,"KILLS");twodigits(24,101,kills);}
  text(7,110,"ENTER SKIPS MUSIC");
  /* show what was just drawn: draw()'s own flip (bit 3 clears the low page, bit 2 the high one) */
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
@@ -220,7 +228,7 @@ static void use(){
  for(j=0;j<=3;j++){
  byte nx=(px+cosine[angle]*j*4)>>8,ny=(py+cosine[(angle+24)&31]*j*4)>>8;
  byte *b=at(nx,ny);
- if(*b&32){won=1;cue(1);return;}
+ if(*b&32){clockOn=0;won=1;cue(1);return;}
  if(*b&16){byte lock=*b>>6;if(lock && !(keys&(1<<(lock-1))))return;{byte i;if(movingDoor)return;for(i=0;i<PACK[10];i++)if(doorCells[i]==(word)(b-GRID)){movingDoor=doorGroups[i];phase[movingDoor]=1;rise=1;break;}}sound(SND_DOOR);return;}
  if(!cross(x,y,nx,y)||!cross(nx,y,nx,ny))return;
  x=nx;y=ny;
@@ -350,6 +358,7 @@ static void readLevel(){
  while(!diskRead(PACK_SECTOR,PACK_SECTORS,PACK)||PACK[0]!=72||PACK[1]!=71||PACK[2]!=82||PACK[3]!=50)waitForDisk();
  startLevel();
  while(!loadArea(areaAt(px>>8,py>>8)))waitForDisk();
+ clockStart();
  }
 int main(){
  byte i,wasUse=0,wasD=0;
@@ -358,6 +367,8 @@ int main(){
  IO(0xffc1)=0;IO(0xffc3)=0;IO(0xffc5)=0;IO(0xffc6)=0;IO(0xffc9)=0;
  IO(0xffca)=0;IO(0xffcc)=0;IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;
  IO(0xff03)=0x30;IO(0xff02)=255;IO(0xff03)=0x34;IO(0xff01)=0x30;IO(0xff00)=0;IO(0xff01)=0x34;
+ installClock();
+ clearSignatures();
  clearScreen((byte*)0x400);clearScreen((byte*)0xe000);back=(byte*)0xe000;
  health=100;ammo=50;
  back=(byte*)0x400;text(8,82,"READING LEVEL DISK");
