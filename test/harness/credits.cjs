@@ -33,7 +33,7 @@ async function creditsScreen(files) {
   for (let f = 0; f < 3000; f++) {
     m.setKey('C', true); s.runFrames(1);
     if (r(0x200)) throw Error('the game started without showing the credits screen');
-    if (rowText(r, m.sam.displayBase, 40).trim() === 'CREDITS') { s.runFrames(5); rows = ROWS.map((y) => rowText(r, m.sam.displayBase, y)); break; }
+    if (rowText(r, m.sam.displayBase, 40).trim() === 'CREDITS') { s.runFrames(50); rows = ROWS.map((y) => rowText(r, m.sam.displayBase, y)); break; }
   }
   m.setKey('C', false);
   if (!rows.length) throw Error('C on the title never showed a credits screen; PC ' + m.cpu.pc.toString(16));
