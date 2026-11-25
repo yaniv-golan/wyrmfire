@@ -91,8 +91,10 @@ both phase effects of the same two early draws, not a speed difference.
   credits screen and the clock fit together.
   (Before the merge, at `ae892ba`: +341 cycles a picture, 79,047, +0.43%; encounter against main `91abee6`
   15.63 / 12.96 / 10.40 → 15.63 / 12.96 / 10.29; `program_end` $4E50.)
-- **Waiver granted by the owner, 2026-11-25**, relayed by the PM: fps ≥ baseline fails on spread (10.40 → 10.29)
-  and the clock is a real per-frame cost (+0.43% cycles), so the phase arm does not cover it; the waiver does.
+- **Waiver granted by the owner, 2026-11-25**, relayed by the PM: fps ≥ baseline fails on spread (10.71 → 10.29
+  against main `775ec6c`, confirmed by the owner for the merged head; first granted as 10.40 → 10.29 against
+  `91abee6`) and the clock is a real per-frame cost (+0.48% cycles, +0.43% before the merge), so the phase arm
+  does not cover it; the waiver does.
   **The baseline numbers stay exactly as they are** -- this entry records the exception, it does not fold the new
   figures into a baseline.
 - **After merging main `775ec6c` (freedoom-credits) and the review fixes -- dodge, accepted 2026-11-25.** Measured
