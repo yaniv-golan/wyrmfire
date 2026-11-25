@@ -17,18 +17,20 @@ above. `freedoom1.wad` is in the [Freedoom 0.13.0](https://freedoom.github.io)
 zip. For Freedoom E1M1 (and only that map) the result must have the
 SHA-256 pinned in [`release/expected.json`](release/expected.json).
 
-![WYRMFIRE in play: the player walks a Freedoom E1M1 corridor, turning and firing the pistol at monsters while a fireball flies past](docs/media/gameplay.gif)
+![WYRMFIRE in play: the player walks the Freedoom E1M1 level, turning and firing the pistol at monsters while an imp throws a fireball](docs/media/gameplay.gif)
 
 | | |
 |---|---|
 | ![Freedoom E1M1 just after the spawn: a long corridor with a distant monster, the pistol and the status bar](docs/media/spawn.png) | ![Three monsters across a room of stepped walls](docs/media/zombies.png) |
-| ![A fireball coming at the player from a monster between lit wall columns](docs/media/fireball.png) | ![A hall with a hatched wall and a monster at the far end](docs/media/hall.png) |
+| ![A round fireball flying at the player beside the monster that threw it, past a hatched wall](docs/media/fireball.png) | ![A hall with a hatched wall, a monster standing in a doorway and two small items on the floor](docs/media/hall.png) |
 
 *Recorded headless in CLOADM (Dragon 64, PAL, no ROMs) from the Freedoom
-E1M1 level disk. Level, sprites and sounds: [Freedoom](https://freedoom.github.io)
-0.13.0, © Contributors to the Freedoom project, BSD-3-Clause
-([LICENSES/freedoom.txt](LICENSES/freedoom.txt)). The GIF plays at the
-emulated machine's real frame rate. To regenerate: [README media](#readme-media).*
+E1M1 level disk. The level data is converted from [Freedoom](https://freedoom.github.io)
+0.13.0, Copyright © 2001-2024 Contributors to the Freedoom project, used under
+the BSD 3-Clause licence (full text: [third_party/freedoom/COPYING.adoc](third_party/freedoom/COPYING.adoc)),
+and has been modified for the Dragon 64. The Freedoom project does not endorse
+CLOADM or WYRMFIRE. The GIF plays at the emulated machine's real frame rate.
+To regenerate: [README media](#readme-media).*
 
 ## Running
 
