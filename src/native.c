@@ -141,12 +141,13 @@ static asm void audioSlice(){
 }
 /* MUS time units are 1/140 second. Render one part on the physical DAC.
  * Read the keys between events so a player can skip the cue. */
-static byte musicOn=1;
+static byte musicOn=1,creditsWanted;
 static void tune(const byte *score){
  if(!musicOn)return;
  while(score[2]){
     word inc=((word)score[0]<<8)+score[1];byte ticks=score[2];score+=3;
     IO(0xff02)=254;if(!(IO(0xff00)&64))break;
+    IO(0xff02)=247;if(!(IO(0xff00)&4)){creditsWanted=1;break;}
     while(ticks--){
      asm {
        pshs y,u
@@ -329,6 +330,16 @@ static byte loadAssets(){
  sum=0;for(p=ASSETS+8;p!=ASSETS+n;p++)sum+=*p;
  return sum==*(word *)(ASSETS+6);
 }
+/* The credits screen, from the title with C: the level disk's own credit lines (CREDITS entry of the asset
+ * block, written by the converter for the WAD it came from), then the engine's. Rows are 9 scanlines; 12 apart. */
+static void credits(){
+ const byte *p=ASSET(CREDITS),*end=p+ASSET_LEN(CREDITS);byte y=64,n;
+ clearScreen(back);text(12,40,"CREDITS");
+ while(p<end){n=0;while(p[n])n++;text((32-n)>>1,y,(const char*)p);p+=n+1;y+=12;}
+ y+=12;text(7,y,"WYRMFIRE  GPL-3.0");text(0,y+12,"NOT AFFILIATED WITH ID SOFTWARE");
+ text(8,160,"ENTER CONTINUES");
+ while(!key(0,64)){}while(key(0,64)){}
+}
 static void waitForDisk(){text(4,82,"INSERT LEVEL DISK / ENTER");while(!key(0,64)){}}
 static void readLevel(){
  byte j;
@@ -351,7 +362,8 @@ int main(){
  health=100;ammo=50;
  back=(byte*)0x400;text(8,82,"READING LEVEL DISK");
  while(!loadAssets())waitForDisk();
- clearScreen(back);text(12,74,"WYRMFIRE");text(8,92,"ENTER SKIPS MUSIC");tune(introNotes);
+ clearScreen(back);text(12,74,"WYRMFIRE");text(8,92,"ENTER SKIPS MUSIC");text(11,110,"C CREDITS");tune(introNotes);
+ if(creditsWanted||key(3,4))credits();
  clearScreen(back);text(8,82,"READING LEVEL DISK");
  readLevel();
  clearScreen(back);back=(byte*)0xe000;

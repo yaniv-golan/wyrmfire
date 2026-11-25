@@ -8,6 +8,13 @@ The 8x9 font in `src/font.h` was drawn for this project (`tools/mkfont.mjs`).
 
 ## Freedoom (reference level disk, not shipped)
 
+WYRMFIRE level data is converted from Freedoom (https://freedoom.github.io), Copyright © 2001-2024 Contributors to the Freedoom project, used under the BSD 3-Clause licence (full text: third_party/freedoom/COPYING.adoc). The data has been modified for the Dragon 64. The Freedoom project does not endorse CLOADM or WYRMFIRE.
+
+DOOM is a registered trademark of ZeniMax Media Inc. CLOADM and WYRMFIRE are independent projects, not affiliated with or endorsed by id Software, ZeniMax Media or Microsoft. References to DOOM describe file compatibility only.
+
+The verbatim Freedoom 0.13.0 `COPYING.adoc`, `CREDITS` and `CREDITS-MUSIC`,
+with a version and licence note, are in [`third_party/freedoom/`](third_party/freedoom).
+
 No level disk is committed or attached to a release. The reference level
 disk `wyrmfire-freedoom-e1m1.vdk` (pinned in `release/expected.json`), which
 CI and players build with the converter, is converted from

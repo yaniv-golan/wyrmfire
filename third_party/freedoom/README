@@ -1,0 +1,18 @@
+Freedoom 0.13.0 in WYRMFIRE
+
+WYRMFIRE level data is converted from Freedoom (https://freedoom.github.io),
+Copyright (c) 2001-2024 Contributors to the Freedoom project, under the
+BSD 3-Clause licence in COPYING.adoc. This directory holds COPYING.adoc,
+CREDITS and CREDITS-MUSIC verbatim from the 0.13.0 tag (see VERSION).
+
+Licence notes for the files the converter reads (freedoom1.wad: map
+lumps, sprites, sounds, music, PLAYPAL):
+  - Everything is under the BSD 3-Clause licence in COPYING.adoc, except
+    as listed here.
+  - lumps/playpal/ and lumps/colormap/ in the source repository carry a
+    GPL-2.0 COPYING file; the PLAYPAL generator script is marked
+    GPL-2.0-or-later. The converter reads PLAYPAL only to compute a grey
+    level per colour for 1-bit thresholding; no palette bytes are written
+    to a level disk. COLORMAP is not read.
+  - dist/COPYING.CC0 (CC0) covers the AppStream metainfo files, which
+    WYRMFIRE does not use.
