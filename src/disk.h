@@ -31,7 +31,7 @@
 #define ASSET_SECTOR 0
 #define ASSET_SECTORS 30
 #define ASSET_BYTES 7680
-#define ASSET_COUNT 19
+#define ASSET_COUNT 20
 #define ASSET(i) (ASSETS + ((word *)(ASSETS+8))[(i)<<1])
 #define ASSET_LEN(i) (((word *)(ASSETS+8))[((i)<<1)+1])
 #define guard ASSET(0)
@@ -53,3 +53,6 @@
 #define SND_DOOR 16
 #define SND_HURT 17
 #define SND_PICKUP 18
+/* Level-data lines for the credits screen, each NUL-terminated (the converter
+ * writes the credit of the WAD the disk was made from). */
+#define CREDITS 19

@@ -798,7 +798,19 @@ export const SPRITES = [['guard', 'POSSA1', 16, 24], ['imp', 'TROOA1', 16, 24], 
 export const FACES = [['marine', 'STFST01'], ['wounded', 'STFST31']];
 export const CUES = [['intro', 'D_E1M1', 1], ['inter', 'D_INTER', 0], ['victory', 'D_VICTOR', 1]];
 export const SOUNDS = [['fire', 'DSPISTOL'], ['blast', 'DSSHOTGN'], ['door', 'DSDOROPN'], ['hurt', 'DSPLPAIN'], ['pickup', 'DSITEMUP']];
-export const ENTRY_NAMES = [...SPRITES.map((s) => s[0]), ...FACES.map((f) => f[0]), ...CUES.map((c) => c[0] + 'Notes'), ...SOUNDS.map((s) => 'snd_' + s[0])];
+export const ENTRY_NAMES = [...SPRITES.map((s) => s[0]), ...FACES.map((f) => f[0]), ...CUES.map((c) => c[0] + 'Notes'), ...SOUNDS.map((s) => 'snd_' + s[0]), 'credits'];
+
+/** Level-data lines for the engine's credits screen (each NUL-terminated, at most 32 characters of the engine font, 32-90). */
+export const CREDIT_LINES = { freedoom: ['LEVEL DATA: FREEDOOM (BSD)', 'MODIFIED FOR THE DRAGON 64'], other: ['LEVEL DATA: YOUR OWN WAD'] };
+export function creditData(freedoom) {
+  const out = [];
+  for (const line of CREDIT_LINES[freedoom ? 'freedoom' : 'other']) {
+    if (line.length > 32 || [...line].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) > 90)) throw new Error('credit line does not fit the engine font: ' + line);
+    for (const c of line) out.push(c.charCodeAt(0));
+    out.push(0);
+  }
+  return out;
+}
 
 function spriteData(wad, lump, width, height) {
   const px = wad.patch(lump), data = [];
@@ -842,12 +854,14 @@ function soundData(data) {
   return out;
 }
 
-export function buildAssets(wad) {
+/** freedoom: the WAD is a Freedoom release (its credit lines go in the 'credits' entry). */
+export function buildAssets(wad, freedoom = false) {
   const entries = [];
   for (const [, lump, w, h] of SPRITES) entries.push(spriteData(wad, lump, w, h));
   for (const [, lump] of FACES) entries.push(faceData(wad, lump));
   for (const [, lump, ch] of CUES) entries.push(melody(wad.lump(lump), ch, 320));
   for (const [, lump] of SOUNDS) entries.push(soundData(wad.lump(lump)));
+  entries.push(creditData(freedoom));
   const base = 8 + 4 * entries.length, b = new Out();
   b.bytes([72, 71, 65, 49]); b.u16(0, 0);
   let off = base;
@@ -1571,6 +1585,74 @@ export async function openWadAsync(input, options = {}) {
   return finishWad(step.value, options);
 }
 
+// ---------------------------------------------------------------- CREDITS.TXT
+
+/** Freedoom's licence, verbatim from third_party/freedoom/COPYING.adoc (0.13.0); the parity test checks it against that file. */
+export const FREEDOOM_COPYING = `Copyright © 2001-2024
+Contributors to the Freedoom project.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in the
+    documentation and/or other materials provided with the distribution.
+  * Neither the name of the Freedoom project nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS
+IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+For a list of contributors to the Freedoom project, see the file
+CREDITS.
+`;
+
+/** Freedoom releases by WAD SHA-256 (tools/versions.env). Their level disks carry CREDITS.TXT. */
+export const FREEDOOM_RELEASES = Object.fromEntries(KNOWN_IWADS.filter((k) => k.sha256).map((k) => [k.sha256, { file: k.name, release: k.release }]));
+
+/** The CREDITS.TXT text of a level disk converted from a Freedoom WAD (UTF-8, LF). */
+export function creditsText(release, file, map) {
+  return [
+    `WYRMFIRE level disk: map ${map} of ${file} (${release}).`,
+    '',
+    'WYRMFIRE level data is converted from Freedoom (https://freedoom.github.io), Copyright © 2001-2024 Contributors to the Freedoom project, used under the BSD 3-Clause licence (full text: third_party/freedoom/COPYING.adoc). The data has been modified for the Dragon 64. The Freedoom project does not endorse CLOADM or WYRMFIRE.',
+    '',
+    'Modified: the map, sprites, status-bar faces, sounds and music on this disk were converted by the WYRMFIRE converter and reduced for the Dragon 64 (a cell grid and precomputed wall regions, 1-bit sprites, 6-bit 4 kHz samples, short monophonic note lists).',
+    '',
+    'DOOM is a registered trademark of ZeniMax Media Inc. CLOADM and WYRMFIRE are independent projects, not affiliated with or endorsed by id Software, ZeniMax Media or Microsoft. References to DOOM describe file compatibility only.',
+    '',
+    'Freedoom licence (COPYING.adoc):',
+    '',
+    FREEDOOM_COPYING,
+  ].join('\n');
+}
+
+/** Place CREDITS.TXT from sector `from`, skipping the directory tracks; null if it does not fit on the disk. */
+export function placeCredits(text, from) {
+  const data = new TextEncoder().encode(text), count = Math.ceil(data.length / 256), extents = [];
+  let s0 = from, k = 0, run = null;
+  while (k < count) {
+    if (s0 >= 80 * 36) return null;
+    if (DIRECTORY.some(([lo, hi]) => lo <= s0 && s0 < hi)) { run = null; s0++; continue; }
+    if (!run) { run = [s0, []]; extents.push(run); }
+    run[1].push(data.subarray(256 * k, 256 * k + 256)); k++; s0++;
+  }
+  return extents.map(([first, parts]) => { const b = new Uint8Array(parts.reduce((t, p) => t + p.length, 0)); let o = 0; for (const p of parts) { b.set(p, o); o += p.length; } return [first, b]; });
+}
+
 // ---------------------------------------------------------------- top level
 
 /**
@@ -1597,8 +1679,12 @@ function convertWad(source, options) {
   const { records: recs, floors } = prepareGeometry(lumps, m.ox, m.oy, m.grid);
   const atlas = buildAtlas(recs, m.grid, floors);
   const lv = packLevel(m, atlas);
-  const { assets, sizes } = buildAssets(wad);
-  const disk = buildVdk([['WYRMFIRE', 'DAT', [[ASSET_SECTOR, assets]]], ['WYRMFIRE', 'LVL', lv.extents]]);
+  const freedoom = FREEDOOM_RELEASES[source.sha256];
+  const { assets, sizes } = buildAssets(wad, !!freedoom);
+  const files = [['WYRMFIRE', 'DAT', [[ASSET_SECTOR, assets]]], ['WYRMFIRE', 'LVL', lv.extents]];
+  const credits = freedoom ? placeCredits(creditsText(freedoom.release, freedoom.file, mapName), lv.end) : null;
+  if (credits) files.push(['CREDITS', 'TXT', credits]);
+  const disk = buildVdk(files);
   const info = {
     map: mapName,
     cells: m.cells,
@@ -1617,6 +1703,7 @@ function convertWad(source, options) {
     levelBytes: lv.extents.reduce((t, e) => t + e[1].length, 0),
     lastSector: lv.end,
     assetBytes: assets.length,
+    credits: freedoom ? (credits ? credits.reduce((t, e) => t + e[1].length, 0) : 'does not fit') : null,
     assetSizes: Object.fromEntries(ENTRY_NAMES.map((n, i) => [n, sizes[i]])),
     diskBytes: disk.length,
     sha256: sha256Hex(disk),
