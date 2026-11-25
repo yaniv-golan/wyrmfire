@@ -93,7 +93,7 @@ both phase effects of the same two early draws, not a speed difference.
   and the clock is a real per-frame cost (+0.43% cycles), so the phase arm does not cover it; the waiver does.
   **The baseline numbers stay exactly as they are** -- this entry records the exception, it does not fold the new
   figures into a baseline.
-- **After merging main `775ec6c` (freedoom-credits) and the review fixes -- dodge needs a decision.** Measured
+- **After merging main `775ec6c` (freedoom-credits) and the review fixes -- dodge, accepted 2026-11-25.** Measured
   against main as it now is (15.63 / 12.96 / **10.71**; the credits merge itself moved spread from 10.40), the
   clock build reads **15.63 / 12.14 / 10.29**. Spread is what the waiver covers. **Dodge 12.96 → 12.14 is new and
   is not covered.** It is not disk and not the handler's work: the WD2797's read log in the dodge run is identical,
@@ -104,6 +104,8 @@ both phase effects of the same two early draws, not a speed difference.
   +4 or +8 cycles of padding in the handler (after or before the flag clear), and 12 dead bytes giving the fixed
   build's layout. So the step needs the new handler's timing and its layout together; it is an input-phase step in
   the scenario, not a cost per picture. Restoring 12.96 would mean dropping the source check (review item 4).
+  **Accepted by the owner, 2026-11-25**, relayed by the PM: the waiver above is extended to dodge 12.96 → 12.14,
+  and the source check stays. The baselines stay unrestated.
 
 ### Per-commit measurement, `5b2b4c1` (×8) to the branch tip
 
@@ -286,7 +288,8 @@ disk reads did not change that". Its source is not in the history, so the cause 
 | regions: load median / max; stall median / max | 44 / 68; 38 / 63 | 45 / 68; 38 / 62 | 45 / 69; 38 / 64 | 45 / 67; 38 / 63 |
 | `program_end` / binary | $4E60 / 9,783 bytes | $4E50 / 10,111 bytes | $4FE0 / 10,109 bytes | **$4FDC** (36 bytes below $5000) / 10,432 bytes |
 
-(Dodge in the last column: see the exception entry above -- an input-phase step in that scenario, not a cost.)
+(Dodge in the last column: see the exception entry above -- an input-phase step in that scenario, not a cost;
+accepted by the owner on 2026-11-25.)
 
 The cost is the interrupt: ~84 cycles a field, 4.45 fields a picture, about 375 cycles a picture; the column
 cache's new address takes about 34 of them back (measured 79,081 before the move). The region loads show no
