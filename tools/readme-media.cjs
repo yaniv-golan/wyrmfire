@@ -20,7 +20,7 @@ const [cloadm, wadPath, out = path.join(ROOT, 'docs/media')] = process.argv.slic
 if (!cloadm || !wadPath) { console.error('usage: readme-media.cjs CLOADM_DIR freedoom1.wad [OUT_DIR]'); process.exit(2); }
 
 // Shots: picture number -> file. GIF: from GIF_FROM picture, GIF_SECONDS of emulated time.
-const SHOTS = { 3: 'spawn.png', 90: 'zombies.png', 131: 'hall.png', 141: 'fireball.png' };
+const SHOTS = { 3: 'spawn.png', 90: 'zombies.png', 109: 'fireball.png', 131: 'hall.png' };
 const GIF_FROM = 84, GIF_SECONDS = 7.9, SCALE = 2;
 
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');

@@ -22,7 +22,7 @@ SHA-256 pinned in [`release/expected.json`](release/expected.json).
 | | |
 |---|---|
 | ![Freedoom E1M1 just after the spawn: a long corridor with a distant monster, the pistol and the status bar](docs/media/spawn.png) | ![Three monsters across a room of stepped walls](docs/media/zombies.png) |
-| ![A round fireball flying at the player beside the monster that threw it, past a hatched wall](docs/media/fireball.png) | ![A hall with a hatched wall, a monster standing in a doorway and two small items on the floor](docs/media/hall.png) |
+| ![An imp beside the round fireball it has just thrown, the ball half lost against a light wall](docs/media/fireball.png) | ![A hall with a hatched wall, a monster standing in a doorway and three small items on the floor](docs/media/hall.png) |
 
 *Recorded headless in CLOADM (Dragon 64, PAL, no ROMs) from the Freedoom
 E1M1 level disk. The level data is converted from [Freedoom](https://freedoom.github.io)
