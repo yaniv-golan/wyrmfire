@@ -158,8 +158,10 @@ jobs:
         run: node test/harness/loader-clear.cjs cloadm build
       - name: HUD key glyphs
         run: node test/harness/hud-keys.cjs cloadm build
-      - name: End screen shows KILLS (no TIME)
+      - name: End screen shows TIME and KILLS
         run: node test/harness/end-screen.cjs cloadm build
+      - name: Level clock counts every field, disk transfers included
+        run: node test/harness/clock.cjs cloadm build --verbose
       - name: Route harness
         timeout-minutes: 20
         run: ONE_LEVEL=1 node test/harness/route.cjs cloadm build
@@ -169,3 +171,22 @@ jobs:
           name: smoke
           path: shots
           retention-days: 7
+
+  clock-mutants:
+    name: Level clock mutants (each must fail the clock harness)
+    needs: [converter]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: ./.github/actions/toolchain
+      - uses: actions/download-artifact@v4
+        with: { name: freedoom-level, path: level }
+      - name: Fetch CLOADM at the pinned commit
+        run: |
+          git init -q cloadm && cd cloadm
+          git fetch -q --depth 1 https://github.com/yaniv-golan/CLOADM.git "$CLOADM_COMMIT"
+          git checkout -q FETCH_HEAD && git log --oneline -1
+      - name: Mutants
+        run: sh test/clock-mutants.sh cloadm level/level.vdk

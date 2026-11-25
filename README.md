@@ -82,7 +82,7 @@ or in Node.
 
 | Path | What |
 |---|---|
-| `src/` | Engine: `native.c`, renderer (`scene.h`), combat (`combat.h`), WD2797 driver (`floppy.h`), level-disk layout and RAM map (`disk.h`), engine-owned `font.h` and `tables.h`, self-extracting loader (`loader.asm`) |
+| `src/` | Engine: `native.c`, renderer (`scene.h`), combat (`combat.h`), WD2797 driver (`floppy.h`), field-sync level clock (`clock.h`), level-disk layout and RAM map (`disk.h`), engine-owned `font.h` and `tables.h`, self-extracting loader (`loader.asm`) |
 | `bin/wyrmfire.bin` | The committed engine binary; CI rebuilds it and requires a byte-identical match |
 | `converter/` | `wyrmfire-convert.js` (dependency-free ES module), `worker.js` (Web Worker), `cli.mjs` |
 | `tools/reference/` | Python reference converter; the JS output must equal it byte for byte |
@@ -134,6 +134,9 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     ONE_LEVEL=1 node test/harness/route.cjs cloadm run                        # walks from the spawn to the exit
     node test/harness/swap.cjs cloadm run                                     # same binary, replacement level disk
     node test/harness/profile.cjs cloadm run run/shots                        # per-function time profile + PNGs
+    node test/harness/clock.cjs cloadm run                                    # level clock counts every field, loads included
+    node test/harness/end-screen.cjs cloadm run                               # TIME mm:ss and KILLS on the level clear
+    sh test/clock-mutants.sh cloadm run/wyrmfire.vdk                          # clock mutants must fail (needs CMOC + LWTOOLS)
 
 Level disks converted from id Software WADs stay on your machine: never
 commit or upload them.
