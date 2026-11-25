@@ -42,7 +42,10 @@ asm void clockField(){
 }
 /* The IRQ line is shared: PIA0's two sides and, on the Dragon 64, the 6551 ACIA. Only the field-sync flag (CRB
  * bit 7) counts a field; anything else is acknowledged -- a PORT A read clears PIA0's HS flag, a STATUS read clears
- * the ACIA's -- and not counted, so a stray source can neither hold IRQ down nor run the clock fast. */
+ * the ACIA's -- and not counted, so a stray source can neither hold IRQ down nor run the clock fast. Both
+ * acknowledgements are tested in CLOADM (test/harness/clock.cjs): HS by enabling PIA0's CA1 interrupt; the ACIA by
+ * raising an interrupt in CLOADM's 6551 model directly, since the engine never programs the 6551 to raise one --
+ * so the ACIA case rests on that model's read-status-clears-IRQ behaviour, not on a real serial event. */
 static asm void fieldIrq(){
  asm {
     lda $ff03

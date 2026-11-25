@@ -12,6 +12,9 @@
 #   s4slow  -- four cycles more on the S4->S1 path of the poll: the status reads are 21 cycles apart, past the bound
 #              that keeps a poll from costing a byte.
 #   nosource -- fieldIrq counts every IRQ, not only field sync: with PIA0's HS interrupt on, the clock runs fast.
+#   h-noack -- fieldIrq does not acknowledge PIA0's HS interrupt (no port A read): with HS on, the handler runs back
+#              to back and no picture is drawn.
+#   a-noack -- fieldIrq does not acknowledge the 6551 (no status read): with its interrupt raised, the same.
 set -eu
 cloadm=$(CDPATH='' cd -- "$1" && pwd); vdk=$(CDPATH='' cd -- "$(dirname "$2")" && pwd)/$(basename "$2")
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
@@ -37,4 +40,6 @@ mutant unmask floppy.h '   orcc #$50\n   ldy #0\n' '   ldy #0\n' 'no picture'
 mutant d0c floppy.h '@d0c lda <$43\n   sta ,x+\n   leay 1,y\n' '@d0c lda <$43\n   sta ,x+\n' 'the clock counted'
 mutant s4slow floppy.h '   leay 1,y\n   bra @wait\n' '   leay 1,y\n   nop\n   nop\n   bra @wait\n' 'cycles apart'
 mutant nosource clock.h '    lda $ff03\n    bpl @other\n' '' 'a non-FS interrupt was counted'
+mutant h-noack clock.h '@other lda $ff00\n    lda $ff05\n' '@other lda $ff05\n' 'does not acknowledge PIA0'
+mutant a-noack clock.h '@other lda $ff00\n    lda $ff05\n' '@other lda $ff00\n' 'does not acknowledge the 6551'
 echo 'all clock mutants killed'

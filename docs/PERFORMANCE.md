@@ -78,25 +78,27 @@ So item 5 adds no per-frame work at all: two one-off redraws shift when later pi
 boundaries, which can move a field count either way. Stationary gaining a field and dodge/spread losing one are
 both phase effects of the same two early draws, not a speed difference.
 
-### Field-sync level clock (TIME back on the end screen, costs 0.43% of the CPU) — **ACCEPTED** (2026-11-25)
+### Field-sync level clock (TIME back on the end screen, costs 0.48% of the CPU) — **ACCEPTED** (2026-11-25)
 
 - **Bought:** the end screen's TIME, counted from real PAL fields and exact across disk loads (details and the
   root cause of the earlier attempt under item 4 below).
-- **Cost:** a real per-frame cost, so the amended gate's phase arm does **not** cover it: the field interrupt takes
-  ~84 cycles a field, **+341 cycles a picture** (78,706 → 79,047). Encounter **15.63 / 12.96 / 10.40 → 15.63 /
-  12.96 / 10.29** (spread one field over its window); region loads +1.0% in sum, stall median 38, max 63 → 62.
-  Bytes: the clock adds 328, and moving the renderer's column cache to low RAM gives back 344, so `program_end`
-  $4E60 → **$4E50**. That is what lets `claude/freedoom-credits` (+384 bytes, `program_end` $4FE0 on its own)
-  merge with this: a trial merge builds to $4FD0, 48 bytes below ASSETS, and passes its credits harness and
-  the clock, end-screen, encounter, HUD, swap and smoke checks.
+- **Cost, at the merged head** (main `775ec6c` merged, review fixes in): a real per-frame cost, so the amended
+  gate's phase arm does **not** cover it. The field interrupt takes ~85 cycles a field (8 of them the source
+  check), **+376 cycles a picture** (78,706 → 79,082, **+0.48%**). Encounter against main as it now is: **15.63 /
+  12.96 / 10.71 → 15.63 / 12.14 / 10.29**; regions stall median 38, max 64 → 63. `program_end` **$4FDC**, 36
+  bytes below ASSETS at $5000 (main with the credits screen alone: $4FE0). The clock's code is 328 bytes, the
+  source check 12 more; moving the renderer's column cache to low RAM gave back 344, which is what let the
+  credits screen and the clock fit together.
+  (Before the merge, at `ae892ba`: +341 cycles a picture, 79,047, +0.43%; encounter against main `91abee6`
+  15.63 / 12.96 / 10.40 → 15.63 / 12.96 / 10.29; `program_end` $4E50.)
 - **Waiver granted by the owner, 2026-11-25**, relayed by the PM: fps ≥ baseline fails on spread (10.40 → 10.29)
   and the clock is a real per-frame cost (+0.43% cycles), so the phase arm does not cover it; the waiver does.
   **The baseline numbers stay exactly as they are** -- this entry records the exception, it does not fold the new
   figures into a baseline.
 - **After merging main `775ec6c` (freedoom-credits) and the review fixes -- dodge, accepted 2026-11-25.** Measured
   against main as it now is (15.63 / 12.96 / **10.71**; the credits merge itself moved spread from 10.40), the
-  clock build reads **15.63 / 12.14 / 10.29**. Spread is what the waiver covers. **Dodge 12.96 → 12.14 is new and
-  is not covered.** It is not disk and not the handler's work: the WD2797's read log in the dodge run is identical,
+  clock build reads **15.63 / 12.14 / 10.29**. Dodge 12.96 → 12.14 was not covered by the first waiver (granted
+  for spread); the owner accepted it on 2026-11-25 (below). It is not disk and not the handler's work: the WD2797's read log in the dodge run is identical,
   the handler's non-field-sync branch never runs, and the steady-state cost of the fixes is +36 cycles a picture
   (79,046 → 79,082, the source check). What changes is the dodge itself: the player strafes 320 sub-cells instead
   of 256 (X is seen for one more picture), ends a step further along and renders a different view, 173 fields for
@@ -305,15 +307,21 @@ a revolution, both ways).
   7,557 of 7,557, 3,071 inside a masked transfer -- with no edge ever finding the flag still set. Both ends are
   sampled where IRQ is unmasked and the flag is clear, so nothing is pending. Then three more checks:
   **spacing** -- every status read `readTrackPart()` makes is timed by the emulator, and two in a row with no data
-  read between them are at most 17 cycles apart (measured 17); **stray IRQ** -- PIA0's HS interrupt is enabled
-  for five fields, and the clock still counts only field sync (5 of 5); **forced phase** -- a field flag is injected
-  at every poll over 24 region loads, so the `@fs` path runs back to back and a DRQ lands in every part of it:
-  92,349 of 92,349 flag events counted, every read clean, `@d0c` reached 14 times (a natural run reaches it about
-  once in 150 loads).
-* `test/clock-mutants.sh`, five mutants, each failing the harness by name: the poll removed ("the clock counted
+  read between them are at most 17 cycles apart (measured 17); **stray IRQs** -- PIA0's HS interrupt is enabled for
+  50 fields and the clock still counts only field sync (50 of 50) while the engine still draws (2 pictures: the
+  HS interrupt comes every 57 cycles and takes most of the CPU), then an interrupt is raised in CLOADM's 6551
+  each field for 20 fields (20 of 20, 6 pictures, the 6551's interrupt cleared) -- a handler that does not
+  acknowledge either source runs back to back and draws nothing; the engine never programs the 6551 itself, so
+  that case rests on CLOADM's model of it; **forced phase** -- a field flag is injected at every poll over 24 region
+  loads, so the `@fs` path runs back to back and a DRQ lands in every part of it: every flag event counted (103,667
+  of 103,667 in the latest run), every read clean, `@d0c` reached 8 times (a natural run reaches it about once in
+  150 loads).
+* `test/clock-mutants.sh`, seven mutants, each failing the harness by name: the poll removed ("the clock counted
   5210 of 7557 fields"); the transfer left unmasked ("no picture", the original hang); `@d0c` not counting its
   field ("the clock counted 7556 of 7557"); four cycles more on the S4->S1 path ("status reads were 21 cycles
-  apart"); the handler counting every IRQ ("with HS IRQ on, the clock counted 1055 for 6 fields").
+  apart"); the handler counting every IRQ ("with HS IRQ on, the clock counted 10538 for 50 fields"); no PIA0 port A
+  read ("no picture drawn in the 50 fields with HS IRQ on"); no 6551 status read ("0 pictures in the 20 fields and
+  its interrupt still pending").
 * `test/harness/end-screen.cjs`: the row decoded from the rendered page must read exactly the time the clock
   stopped at, at 01:03, 59:59 and past 99 minutes (99:59), with the kills; the clock must be stopped on the end
   screen.
