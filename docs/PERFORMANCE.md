@@ -100,8 +100,9 @@ both phase effects of the same two early draws, not a speed difference.
 - **After merging main `775ec6c` (freedoom-credits) and the review fixes -- dodge, accepted 2026-11-25.** Measured
   against main as it now is (15.63 / 12.96 / **10.71**; the credits merge itself moved spread from 10.40), the
   clock build reads **15.63 / 12.14 / 10.29**. Dodge 12.96 → 12.14 was not covered by the first waiver (granted
-  for spread); the owner accepted it on 2026-11-25 (below). It is not disk and not the handler's work: the WD2797's read log in the dodge run is identical,
-  the handler's non-field-sync branch never runs, and the steady-state cost of the fixes is +36 cycles a picture
+  for spread); the owner accepted it on 2026-11-25 (below). It is not disk and not the handler's work: the
+  WD2797's read log in the dodge run is identical, the handler's non-field-sync branch never runs, and the
+  steady-state cost of the fixes is +36 cycles a picture
   (79,046 → 79,082, the source check). What changes is the dodge itself: the player strafes 320 sub-cells instead
   of 256 (X is seen for one more picture), ends a step further along and renders a different view, 173 fields for
   the same 42 pictures instead of 162. The merge without the fixes reads 162, and so do these variants of it:
@@ -159,7 +160,8 @@ identical in all four columns**.)
 | `d91ceea` | + doc corrections | 78,731 |
 | `860d5cd` | **TIME dropped, KILLS only** | **78,706** |
 | `2eae04c`, `e787fea` | + step-3 docs | 78,706 |
-| `claude/irq-clock` | **+ field-sync clock (TIME back), column cache in low RAM** | **79,047** |
+| `ae892ba` | **+ field-sync clock (TIME back), column cache in low RAM** (before the credits merge) | **79,047** |
+| `claude/irq-clock` head | + main `775ec6c` (credits) merged, review fixes (IRQ source check) | **79,082** |
 
 What it says:
 
