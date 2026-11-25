@@ -35,6 +35,13 @@ opening seconds of three tracks:
 - Level-complete cue (`D_INTER`): "YOU LIVE!!!!" by Stratos
 - Clear cue (`D_VICTOR`): "Distance" by Korp
 
+## README media
+
+The screenshots and GIF in `docs/media/` show that Freedoom E1M1 level disk
+running in WYRMFIRE, so they contain Freedoom artwork (BSD-3-Clause, as
+above). They are recorded by `tools/readme-media.cjs`; no id Software data
+is used.
+
 ## Development dependencies (not redistributed)
 
 - [CMOC](http://sarrazip.com/dev/cmoc.html) by Pierre Sarrazin
