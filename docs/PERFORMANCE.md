@@ -78,7 +78,7 @@ So item 5 adds no per-frame work at all: two one-off redraws shift when later pi
 boundaries, which can move a field count either way. Stationary gaining a field and dodge/spread losing one are
 both phase effects of the same two early draws, not a speed difference.
 
-### Field-sync level clock (TIME back on the end screen, costs 0.48% of the CPU) — **NOT YET ACCEPTED**
+### Field-sync level clock (TIME back on the end screen, costs 0.43% of the CPU) — **ACCEPTED** (2026-11-25)
 
 - **Bought:** the end screen's TIME, counted from real PAL fields and exact across disk loads (details and the
   root cause of the earlier attempt under item 4 below).
@@ -89,8 +89,10 @@ both phase effects of the same two early draws, not a speed difference.
   $4E60 → **$4E50**. That is what lets `claude/freedoom-credits` (+384 bytes, `program_end` $4FE0 on its own)
   merge with this: a trial merge builds to $4FD0, 48 bytes below ASSETS, and passes its credits harness and
   the clock, end-screen, encounter, HUD, swap and smoke checks.
-- **Needs a waiver from the PM** under the rule above: fps ≥ baseline fails on spread. The task was approved by the
-  owner; this entry records the measured price, it does not accept it.
+- **Waiver granted by the owner, 2026-11-25**, relayed by the PM: fps ≥ baseline fails on spread (10.40 → 10.29)
+  and the clock is a real per-frame cost (+0.43% cycles), so the phase arm does not cover it; the waiver does.
+  **The baseline numbers stay exactly as they are** -- this entry records the exception, it does not fold the new
+  figures into a baseline.
 
 ### Per-commit measurement, `5b2b4c1` (×8) to the branch tip
 
