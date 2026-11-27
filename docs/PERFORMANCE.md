@@ -7,7 +7,7 @@ to be written down here or the next change measures against a number nobody can 
 How to measure (all emulated time, so repeat runs are identical — a difference is real, not noise):
 
     ONE_LEVEL=1 node test/harness/route.cjs   $CLOADM $BUILD      # still and moving fps, resident/region stalls
-    node test/harness/regions.cjs $CLOADM $BUILD out.json         # per-region load and stall
+    node test/harness/regions.cjs $CLOADM $BUILD out.json         # per-region load time (read and unpack)
     node test/harness/encounter.cjs $CLOADM $BUILD                # stationary / dodge / spread fps
 
 `$BUILD` is a `tools/build-engine.sh` directory with the level disk beside the binary.
@@ -32,25 +32,47 @@ it); every row is emulated time and repeats exactly.
 
 | measure | `2f47134` | `0493c18` | this branch |
 |---|---|---|---|
-| cycles / picture (`cycles-per-picture.mjs`, N=1000 after 3, the still spawn view) | 79,082 | 86,988 | **36,054** (-58.6% / -54.4% against main) |
-| the same, turning (`--keys LEFT`, N=300) | 122,274 | 121,483 | 80,357 (-33.9%) |
-| the same, walking and turning into new regions (`--keys UP,LEFT`, N=300; disk loads included) | 172,186 | 167,047 | 121,751 (-27.1%) |
-| the same, strafing against a wall (`--keys Z`, N=300) | 81,659 | 85,704 | 34,378 (-59.9%) |
-| encounter stationary / dodge / spread, fps | 15.63 / 12.14 / 10.29 | 15.66 / 12.00 / 10.00 | **41.67 / 28.08 / 17.21** |
-| route, resident | 321 fr / 2,562 flds, median 8, max 11 | 320 / 2,730, median 9, max 17 | 320 / 1,729, median 5, max 12 |
-| route, region changes | 16 / 723, median 49, max 63 | 16 / 717, median 50, max 60 | 16 / 698, median 48, max 62 |
-| route, the level | 338 pictures, 3,708 fields | 337 pictures, 3,873 fields | 337 pictures, **2,848 fields** |
-| regions: load median / max | 45 / 67 | 46 / 71 | 44 / 72 |
-| regions: stall median / max | 38 / 63 | 39 / 63 | **40 / 68** (see below) |
-| `program_end` / binary | $4FDC / 10,432 bytes | $4FF7 / 10,954 | **$4FAC** (84 bytes below $5000) / 11,086 |
+| cycles / picture (`cycles-per-picture.mjs`, N=1000 after 3, the still spawn view) | 79,082 | 86,988 | **36,069** (-58.5% / -54.4% against main) |
+| the same, turning (`--keys LEFT`, N=300) | 122,274 | 121,483 | 80,389 (-33.8%) |
+| the same, walking and turning into new regions (`--keys UP,LEFT`, N=300; disk loads included) | 172,186 | 167,047 | 121,750 (-27.1%) |
+| the same, strafing against a wall (`--keys Z`, N=300) | 81,659 | 85,704 | 34,389 (-59.9%) |
+| encounter stationary / dodge / spread, fps | 15.63 / 12.14 / 10.29 | 15.66 / 12.00 / 10.00 | **41.67 / 28.08 / 16.94** |
+| route, resident | 321 fr / 2,562 flds, median 8, max 11 | 320 / 2,730, median 9, max 17 | 321 / 1,749, median 5, max 13 |
+| route, region changes | 16 / 723, median 49, max 63 | 16 / 717, median 50, max 60 | 16 / 681, median 46, max 62 |
+| route, the level | 338 pictures, 3,708 fields | 337 pictures, 3,873 fields | 338 pictures, **2,852 fields** |
+| regions: the 149 loads, read + unpack = total, fields (`regions.cjs`, see below) | 2,763.4 + 2,076.5 = 4,840.1 | 2,763.5 + 2,076.5 = 4,840.3 | 2,832.4 + 2,077.5 = 4,909.3 |
+| regions: one load, median / max | 35.7 / 58.7 | 35.5 / 58.5 | 34.8 / 59.3 |
+| a 768-sample effect, fields (`sound.cjs`: fire / blast / door / hurt / pickup) | 26.8 / 26.8 / 30.8 / 28.2 / 27.3 | -- | 26.7 / 27.1 / 26.1 / 27.7 / 26.1 |
+| `program_end` / binary | $4FDC / 10,432 bytes | $4FF7 / 10,954 | **$4FE9** (23 bytes below $5000) / 11,145 |
 
-**The gate** (fps >= baseline) passes on all three encounter cases against both commits. **Stalls <= baseline does
-not, by the harness's definition:** `regions.cjs` reports the two pictures around a load minus two resident
-pictures, and a resident picture fell from 6 fields to 3, so the difference grew while the wait itself did not:
-the 149 loads sum to 6,172 fields (main 6,164, `0493c18` 6,352) and the two pictures around each to 6,678 (7,040,
-7,315). The load path is unchanged apart from one counter increment; what moves a single load by a few fields is
-the disk's rotational phase, as before. The route's one 12-field resident picture (main: 11) is a picture that
-scales a frame to a new width, which main does not do; `0493c18`'s worst was 17.
+**The gate** (fps >= baseline) passes on all three encounter cases against both commits. The route's 13-field
+resident picture (main: 11) is a picture that scales a frame to a new width, which main does not do; `0493c18`'s
+worst was 17. The figures are those of the branch head; the profile and the per-commit table below were taken
+one commit earlier, before the sound change, which adds 14 cycles a picture (36,054 -> 36,069).
+
+### Region loads: the load is timed, not the pictures round it
+
+`regions.cjs` used to report a "stall": the two pictures around a load minus two resident pictures. That is a
+difference against the renderer, so it grows when ordinary pictures get cheaper while the disk does exactly what
+it did: with a resident picture down from 6 fields to 3 it read **38 / 63 -> 40 / 68** (median / max) on this
+branch, a slowdown that did not happen. The rule "stalls <= baseline" could not be met by making the game faster.
+
+It now times the load itself, from the instruction that enters `diskRead()` to the one after which `currentArea`
+is the new region, in two parts:
+
+* **read** -- the seek and the transfer. It waits on the disk's rotation, so a build that reaches the load at a
+  different moment gains or loses a revolution (10 fields) on a region: 2,763.4 fields over the 149 regions on
+  main, 2,832.4 here (+2.5%, seven revolutions net; the median load is 0.9 field shorter and the longest 0.6
+  longer). No code on that path changed.
+* **unpack** -- the checksum and the LZ unpack, CPU only: 2,076.5 on main and on `0493c18`, 2,077.5 here (the
+  field interrupt's one more instruction).
+
+**The rule:** unpack <= main + 0.5% (2,087) and read <= main + 5% (2,902), as limits `regions.cjs` takes and CI
+passes. The 5% is the room rotational phase needs; the unpack limit is what catches a slower loader. Mutant
+(`test/pacing-mutants.sh`, in CI): an empty 600-pass loop in `loadArea()` before the unpack fails with "checking
+and unpacking the 149 regions took 2229.6 fields in all, more than the 2087 allowed: the load path got slower".
+A delay before `diskRead()` is entered is outside the timed window and is the route harness's to see; a small one
+inside the read can hide in the 5%.
 
 ### Where the time went (cycles a picture, still spawn view, `tools/profile-cycles.mjs`, N=1000)
 
@@ -118,13 +140,14 @@ Self time, the top of each list:
 | beside a nearer wall, (18,25) angle 0 | 44,144 + 8,186 | 8,041 + 5,123 | 52,330 -> 13,164 |
 | pickup, 2 cells | 44,144 + 7,681 | 8,041 + 7,579 | 51,825 -> 15,620 |
 
-**What did not get cheaper.** A close monster still adds up to about 46,000 cycles a picture: the empty view fell
-from 44,000 to 8,000, but a monster that stands still is still repainted and drawn again on every picture (its
-rows, its columns, and the weapon where it reaches below row 124), and with the view this cheap that is now most
-of the picture. The increment is a little larger than before because the old view already paid for clearing the
-weapon's five columns. Skipping a sprite that has not changed needs a record of what was drawn on each column of
-each page (about 320 bytes) and a second pass over the things; it is not done. The one-off frame scaled to a new
-width (`genFrame`, 17,000 cycles plus 9,000 per byte of width) is unchanged.
+**Known follow-up, deferred by the owner: the close monster.** A close monster still adds up to about 46,000
+cycles a picture: the empty view fell from 44,000 to 8,000, but a monster that stands still is still repainted and
+drawn again on every picture (its rows, its columns, and the weapon where it reaches below row 124), and with the
+view this cheap that is now most of the picture. The increment is a little larger than before because the old
+view already paid for clearing the weapon's five columns. Skipping a sprite that has not changed needs a record
+of what was drawn on each column of each page (about 320 bytes) and a second pass over the things; it is not
+done. The one-off frame scaled to a new width (`genFrame`, 17,000 cycles plus 9,000 per byte of width) is
+unchanged.
 
 ### Same pictures: how it is checked
 
@@ -157,12 +180,42 @@ width (`genFrame`, 17,000 cycles plus 9,000 per byte of width) is unchanged.
 * Stack: lowest S `$FD91` over the same runs (`0493c18`: `$FD8F`); the scaled-frame cache ends at `$FCFF`.
 * Everything else new is in the image's own bss.
 
-### Sound
+### Sound: paced by the field clock
 
-`audioSlice()` is still called once a column, 32 times a picture, four samples a call: the same samples on the
-same pictures (the encounter harness's SND_HURT check is unchanged). An effect is paced by the renderer, as it
-always was, so with pictures 1.5 to 2.7 times as frequent it plays that much faster. Pacing it by the field
-interrupt instead would be a change of behaviour and is left for the owner to decide.
+`audioSlice()` is called once a wall column, 32 times a picture, and used to send four samples on every call: 128
+a picture, so an effect played as fast as pictures were drawn (18 to 19 fields for a 768-sample effect with one
+thing in view on main, 5.5 to 12.4 on this branch before the change). The owner ruled that effects keep their
+speed. The pace is now the field interrupt: each field it counts (`fieldTick`, `clock.h`) grants 29 samples of
+credit, 28 on every fourth -- **28.75 a field**, which is what 128 a picture came to on main's spawn view (79,082
+cycles, 4.45 fields) -- and a call sends its four samples only when four are in credit. One field is taken up a
+call; the credit stops at 116 (four fields), so an effect catches up after a slow picture and never runs far
+ahead; an effect starts with its first four samples in hand. While IRQ is held (a disk transfer, a cue)
+`fieldTick` stands still and so does the effect, as before.
+
+`test/harness/sound.cjs` starts each of the five effects the way the game does, at the spawn with the level's
+own things in view, and records every byte `audioSlice()` writes to `$FF20` with its cycle:
+
+| effect (768 samples each) | `2f47134`, fields | this branch, fields | samples sent |
+|---|---|---|---|
+| fire | 26.8 | 26.7 | the asset's 768, in order, then `$80` |
+| blast | 26.8 | 27.1 | the same |
+| door (at the first door; main's view there is slower) | 30.8 | 26.1 | the same |
+| hurt (a guard beside the player for the hit; a frame is scaled) | 28.2 | 27.7 | the same |
+| pickup | 27.3 | 26.1 | the same |
+
+On main the length follows the view (a picture there is 4.45 fields at the spawn, more at the door); here it is
+768 / 28.75 = 26.7 fields within a field and a half anywhere. The harness requires the bytes to be the asset's
+and the length to be within 2 fields of that. Mutant (`test/pacing-mutants.sh`, in CI): the credit test removed,
+so every call sends again -- "fire: 768 samples took 14.7 fields, want 26.7 (28.75 a field): the effect is paced
+by the pictures drawn, not by the field clock".
+
+**Cost:** +14 cycles a picture when no effect plays (one `inc` in the field interrupt, twice a picture; the idle
+`audioSlice()` is the same three instructions), 36,054 -> 36,069. While an effect plays, a call that sends costs
+about 30 cycles more than it did and a call without credit about 25; the samples themselves cost what they
+always did, and there are fewer of them a picture. 59 bytes of code (`program_end` $4FAC -> $4FE9). The pictures
+and the game state are the same (the identity log does not hash the sound position and its SHA-256 is unchanged);
+what a player hears also differs in grain: the four-sample bursts now come at the start of each field instead of
+evenly through a picture.
 
 ## Measured exceptions
 
