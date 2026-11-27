@@ -220,7 +220,7 @@ static const byte *view,*adjacent;
  * page's signatures were made from it (fresh[page]), every column's signature and rayDistance[] are already
  * right, and a column is visited only for what a sprite left on it. */
 static const byte *lastView,*lastAdjacent;static byte lastKey[4],fresh[2],fast;
-static byte newDist,lift,touched,wNow;static byte *dirtAt;
+static byte newDist,lift,touched,wNow,wHurt;static byte *dirtAt;
 /* The 32 wall columns of the picture. For each: four DAC samples (audioSlice), the view table's entry for the
  * column's ray (blended with the adjacent cell's when there is one: value + (other-value)*blendWeight/256,
  * rounded), the door lift, then the six-byte signature {top, bottom, portal top, portal bottom, ink, portal ink}.
@@ -228,7 +228,9 @@ static byte newDist,lift,touched,wNow;static byte *dirtAt;
  * rows that differ are painted: the rows a sprite or a text drew over (dirt), the rows between the old and the
  * new edge of the wall band when it kept its ink and still overlaps itself (else the whole of both), the rows of
  * a portal band that changed; then the portal band is drawn over the wall band again. The result is what
- * clearing the column and drawing both bands gives. Y = the page's signature for the column, U = the view entry. */
+ * clearing the column and drawing both bands gives. The weapon's frame stays on its column (dirt[128+..]) unless a
+ * signature changed, rows from 124 down were repainted or the portal band reaches them (wHurt). maxRay is the
+ * farthest wall of the picture: a thing deeper than maxRay+1 is behind every column. Y = the page's signature for the column, U = the view entry. */
 asm void columns(){
  asm {
     pshs u,y
@@ -267,7 +269,10 @@ asm void columns(){
     clr _fresh+1
 @key lda #1
     sta ,x
-    clr _col
+    tst _fast
+    bne @c0
+    clr _maxRay
+@c0 clr _col
 @col jsr _audioSlice
     tst _fast
     beq @full
@@ -422,16 +427,21 @@ asm void columns(){
     ldx #_rayDistance
     lda _newDist
     sta b,x
+    cmpa _maxRay
+    bls @merge
+    sta _maxRay
 @merge ldx _dirtBase
     ldb _col
     abx
     stx _dirtAt
     clr _touched
+    clr _wHurt
     lda 64,x
     beq @w0
     cmpa _wNow
     beq @w0
     inc _touched
+    inc _wHurt
     ldd #$7c9f
     jsr _paint1
 @w0 ldd _newSig
@@ -441,6 +451,7 @@ asm void columns(){
     cmpa 4,y
     beq @b2
 @chg1 inc _touched
+    inc _wHurt
     lda 1,y
     cmpa ,y
     bls @oldNone
@@ -493,6 +504,7 @@ asm void columns(){
     cmpa 5,y
     beq @dirt
 @chg2 inc _touched
+    inc _wHurt
     ldd 2,y
     pshs a
     cmpb ,s+
@@ -503,7 +515,10 @@ asm void columns(){
     beq @fin
     inc _touched
     clr ,x
-    decb
+    cmpb #124
+    bls @d1
+    inc _wHurt
+@d1 decb
     lda -64,x
     pshs a
     cmpb ,s+
@@ -511,8 +526,6 @@ asm void columns(){
     jsr _paint1
 @fin tst _touched
     beq @next
-    ldx _dirtAt
-    clr 64,x
     ldd _newSig
     std ,y
     ldd _newSig+4
@@ -520,6 +533,17 @@ asm void columns(){
     stb _bandInk
     ldd _newSig+2
     std 2,y
+    cmpb #124
+    blo @f8
+    pshs a
+    cmpb ,s+
+    bls @f8
+    inc _wHurt
+@f8 tst _wHurt
+    beq @f9
+    ldx _dirtAt
+    clr 64,x
+@f9 ldd 2,y
     jsr _band
 @next leay 6,y
     inc _col

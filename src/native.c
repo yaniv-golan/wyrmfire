@@ -32,6 +32,7 @@ static word length;static byte *unpackTarget;
 #define aimDepth ((byte*)0xf940)
 static byte movingDoor,rise;
 static byte blendWeight,shading,start,epoch;
+static byte maxRay;
 static void animateDoor(){byte i;if(!movingDoor)return;epoch++;rise=++phase[movingDoor];if(rise==7)for(i=0;i<PACK[10];i++)if(doorGroups[i]==movingDoor)GRID[doorCells[i]]&=15;if(rise>=8)movingDoor=0;}
 static byte loadArea(byte zone);static byte areaAt(byte x,byte y);
 
@@ -746,13 +747,18 @@ asm void scaleThing(){
  }
 }
 /* One thing at (tx, ty) cells from the player, of kind tKind (a monster that is winding up when tWind): project
- * it, drop it when it is nearer than 18/32 of a cell or more than 1.25 depths to either side (colHit 0), choose
+ * it, drop it when it is behind every wall of the picture (deeper than maxRay+1: no column could pass the
+ * per-column test), nearer than 18/32 of a cell or more than 1.25 depths to either side (colHit 0), choose
  * its frame and height (pickups 2 map units tall, monsters 7, the boss 8) and draw it (scaleThing). */
 static byte tKind,tWind;
 asm void thing(){
  asm {
     clr _colHit
     jsr _project
+    lda _maxRay
+    inca
+    cmpa _tdepth
+    blo @cull
     ldd _tz
     cmpd #18
     blt @cull
@@ -902,9 +908,9 @@ static byte oldHP[2],oldAmmo[2],oldKeys[2],oldLevel[2],valid[2];
 #include "floppy.h"
 #include "scene.h"
 /* The weapon, 5 bytes by 36 rows at column 14, row 124, one column at a time. A column is skipped when this
- * frame already stands on it (scene() painted nothing there) and no monster or fireball was drawn on it in this
- * picture: drawing the same mask-and-ink frame again over itself, or over anything drawn over it, gives the same
- * bytes as drawing it once on top. */
+ * frame already stands on it (scene() painted nothing on its rows) and no monster or fireball was drawn on rows
+ * 124..159 of it in this picture: drawing the same mask-and-ink frame again over itself, or over anything drawn
+ * over it, gives the same bytes as drawing it once on top. */
 static const byte *wShape;
 asm void weaponCols(){
  asm {
@@ -920,8 +926,9 @@ asm void weaponCols(){
 @c  lda 64,y
     cmpa _wNow
     bne @blit
-    tst ,y
-    beq @skip
+    lda ,y
+    cmpa #124
+    bls @skip
 @blit lda _wNow
     sta 64,y
     ldx _colDest
