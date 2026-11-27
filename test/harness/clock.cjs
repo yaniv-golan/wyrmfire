@@ -71,7 +71,12 @@ const FIELD_HZ = 50, QUIET = 500;
   assert.equal(r(sym.clockOn), 1, 'the clock is not running once the level is in play');
   // the engine is unpacked now: find the flag poll (LDA <$03; BMI) and @d0c (LDA <$43; STA ,X+; LEAY 1,Y) in it
   const find = (bytes) => { for (let a = sym.readTrackPart; a < sym.seekTrack; a++) if (bytes.every((b, i) => r(a + i) === b)) return a; return -1; };
-  const pollAt = find([0x96, 0x03, 0x2b]), d0cAt = find([0x96, 0x43, 0xa7, 0x80, 0x31, 0x21]);
+  // @d0c is found from the branch that reaches it (LDA <$40; BITA #2; BNE @d0c), not from its own bytes: the d0c
+  // mutant (test/clock-mutants.sh) deletes its LEAY 1,Y, and a search for that would miss @d0c in the mutant, so the
+  // mutant could only die by a field landing there in the unforced run, by luck of the engine's timing.
+  const bneAt = find([0x96, 0x40, 0x85, 0x02, 0x26]), d0cAt = bneAt < 0 ? -1 : bneAt + 6 + ((r(bneAt + 5) << 24) >> 24);
+  const pollAt = find([0x96, 0x03, 0x2b]);
+  assert.ok(d0cAt > 0 && [0x96, 0x43, 0xa7, 0x80].every((b, i) => r(d0cAt + i) === b), '@d0c (LDA <$43; STA ,X+ after BNE) not found in readTrackPart');
   let forcing = false, d0cHits = 0;
   m.pcWatch = (pc) => {
     if (pc === d0cAt) d0cHits++;
