@@ -13,5 +13,11 @@
   (an HGA1 asset block or HGR2 level pack, inside a VDK or bare).
 - No BASIC or DOS ROM is used or committed; WYRMFIRE runs on CLOADM's
   built-in firmware.
+- **CMOC multiplies two 8-bit values into 8 bits.** With both operands of `*` a `byte` or `signed char`,
+  CMOC 0.1.101 emits one unsigned `MUL` and keeps only the low byte, where standard C would promote both to
+  `int`: `(sb)8 * (sb)32` gives 0, and a negative operand is wrong even for small products. Make one operand an
+  `int`, `(int)a*b`, or use an asm routine (`project()` in `src/native.c` has a signed 8x8 multiply). CI's
+  `node tools/check-byte-mul.mjs build/native.s` fails on any such product not listed as known to fit, and
+  `test/byte-mul-mutant.sh` checks that it does.
 - The engine binary `bin/wyrmfire.bin` must build byte-identically from
   source (`tools/build-engine.sh build`, CI's *Engine build is reproducible*).

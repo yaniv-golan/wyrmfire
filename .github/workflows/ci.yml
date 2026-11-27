@@ -20,6 +20,10 @@ jobs:
         run: node tools/mkfont.mjs | cmp - src/font.h
       - name: Build
         run: tools/build-engine.sh build
+      - name: No 8-bit products (CMOC truncates byte*byte to a byte)
+        run: node tools/check-byte-mul.mjs build/native.s
+      - name: A new byte*byte product fails that check
+        run: sh test/byte-mul-mutant.sh
       - name: Engine binary embeds no level data
         run: |
           # The engine must not reference any generated header or asset table.
