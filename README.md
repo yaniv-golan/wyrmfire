@@ -145,8 +145,9 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     mkdir run
     node converter/cli.mjs freedoom1.wad --map E1M1 --out run/wyrmfire.vdk   # or your own WAD / doom19s.zip
     CLOADM=$PWD/cloadm WYRMFIRE_BUILD=run node --test test/smoke.test.mjs     # boots, waits for the first in-game frame
-    node test/harness/regions.cjs cloadm run run/regions.json                 # stall of every disk region
+    node test/harness/regions.cjs cloadm run run/regions.json                 # load time of every disk region (read and unpack)
     node test/harness/encounter.cjs cloadm run                                # imp attack, dodge, shotgun spread
+    node test/harness/sound.cjs cloadm run                                    # the five effects: the samples sent to the DAC and their length in fields
     node test/harness/sprites.cjs cloadm run                                  # monster feet, size, screen edge, occlusion (PNGs in run/sprites/)
     node test/harness/identity.cjs cloadm run run/pictures.txt                # a hash of every picture of a scripted run; must match test/identity.sha256
     ONE_LEVEL=1 node test/harness/route.cjs cloadm run                        # walks from the spawn to the exit
@@ -157,6 +158,7 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     node test/harness/clock.cjs cloadm run                                    # level clock counts every field, loads included
     node test/harness/end-screen.cjs cloadm run                               # TIME mm:ss and KILLS on the level clear
     sh test/clock-mutants.sh cloadm run/wyrmfire.vdk                          # clock mutants must fail (needs CMOC + LWTOOLS)
+    sh test/pacing-mutants.sh cloadm run/wyrmfire.vdk                         # per-picture sound and a slower load must fail (needs CMOC + LWTOOLS)
     node test/harness/credits.cjs cloadm run                                  # credits screen (Freedoom disk) and its mutant
 
 Level disks converted from id Software WADs stay on your machine: never
