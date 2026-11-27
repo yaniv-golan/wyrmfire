@@ -25,6 +25,145 @@ How to measure (all emulated time, so repeat runs are identical — a difference
 | encounter spread | 10.40 fps |
 | binary | 10,172 bytes |
 
+## Performance pass (`claude/perf`, from `0493c18`)
+
+The same pictures, drawn with less work. Measured against `0493c18` (sprite scaling) and `2f47134` (main before
+it); every row is emulated time and repeats exactly.
+
+| measure | `2f47134` | `0493c18` | this branch |
+|---|---|---|---|
+| cycles / picture (`cycles-per-picture.mjs`, N=1000 after 3, the still spawn view) | 79,082 | 86,988 | **36,054** (-58.6% / -54.4% against main) |
+| the same, turning (`--keys LEFT`, N=300) | 122,274 | 121,483 | 80,357 (-33.9%) |
+| the same, walking and turning into new regions (`--keys UP,LEFT`, N=300; disk loads included) | 172,186 | 167,047 | 121,751 (-27.1%) |
+| the same, strafing against a wall (`--keys Z`, N=300) | 81,659 | 85,704 | 34,378 (-59.9%) |
+| encounter stationary / dodge / spread, fps | 15.63 / 12.14 / 10.29 | 15.66 / 12.00 / 10.00 | **41.67 / 28.08 / 17.21** |
+| route, resident | 321 fr / 2,562 flds, median 8, max 11 | 320 / 2,730, median 9, max 17 | 320 / 1,729, median 5, max 12 |
+| route, region changes | 16 / 723, median 49, max 63 | 16 / 717, median 50, max 60 | 16 / 698, median 48, max 62 |
+| route, the level | 338 pictures, 3,708 fields | 337 pictures, 3,873 fields | 337 pictures, **2,848 fields** |
+| regions: load median / max | 45 / 67 | 46 / 71 | 44 / 72 |
+| regions: stall median / max | 38 / 63 | 39 / 63 | **40 / 68** (see below) |
+| `program_end` / binary | $4FDC / 10,432 bytes | $4FF7 / 10,954 | **$4FAC** (84 bytes below $5000) / 11,086 |
+
+**The gate** (fps >= baseline) passes on all three encounter cases against both commits. **Stalls <= baseline does
+not, by the harness's definition:** `regions.cjs` reports the two pictures around a load minus two resident
+pictures, and a resident picture fell from 6 fields to 3, so the difference grew while the wait itself did not:
+the 149 loads sum to 6,172 fields (main 6,164, `0493c18` 6,352) and the two pictures around each to 6,678 (7,040,
+7,315). The load path is unchanged apart from one counter increment; what moves a single load by a few fields is
+the disk's rotational phase, as before. The route's one 12-field resident picture (main: 11) is a picture that
+scales a frame to a new width, which main does not do; `0493c18`'s worst was 17.
+
+### Where the time went (cycles a picture, still spawn view, `tools/profile-cycles.mjs`, N=1000)
+
+Inclusive, by phase (the field interrupt is also counted inside whichever phase it lands in, so the rows sum to a
+little more than the total):
+
+| phase | `0493c18` | now |
+|---|---|---|
+| walls (`scene()`: 32 columns, signatures, clear and redraw) | 36,415 | 6,862 |
+|   of which clearing columns (`clearColumn`, 7 a picture) | 9,253 | 0 |
+| monsters and pickups (`actors()`) | 33,875 | 21,409 |
+|   of which the division (`DIV16`, 8 a picture) | 7,831 | in `scaleThing` (about 300 each) |
+|   of which 16-bit products and shifts (`MUL16` x44, `shiftLeft` x12) | 5,252 | 96 |
+| weapon (`sprite()` + `blit`, then `weaponCols`) | 6,703 | 358 |
+| `simulate()` (with `findNearby`) | 6,004 | 4,850 |
+| fireballs (`missiles()`) | 321 | 321 |
+| keyboard (`key()` x12) | 2,269 | 846 |
+| HUD checks, colour set, page flip, markers (`draw()` itself) | 736 | 702 |
+| `main()` itself | 614 | 657 |
+| field interrupt | 339 | 141 (fewer fields a picture) |
+| **total** | **86,988** | **36,054** |
+
+Self time, the top of each list:
+
+| `0493c18` | cycles | now | cycles |
+|---|---|---|---|
+| `scene` | 19,150 | `scaleThing` (8 calls) | 6,374 |
+| `clearColumn` | 9,215 | `project` (11) | 4,030 |
+| `DIV16` | 7,798 | `columns` | 3,814 |
+| `blit` (weapon) | 5,979 | `blitColumn` (4) | 3,603 |
+| `actors` | 5,630 | `findNearby` | 2,710 |
+| `drawScaled` | 5,262 | `makeRuns` (2) | 2,218 |
+| `MUL16` | 4,229 | `simulate` | 2,120 |
+| `project` | 4,031 | `things3d` | 1,748 |
+| `blitColumn` | 3,603 | `drawColumns` (7) | 1,637 |
+| `band` | 3,157 | `thing` (10) | 1,256 |
+
+### Each change and what it saved (still view; each is one commit, measured on its own)
+
+| commit | change | cycles / picture |
+|---|---|---|
+| `0493c18` | start | 86,988 |
+| `fab08e9` | **Wall columns in assembly**: `scene()`'s loop, `samples()`, `band()`, `eraseBand()` hand-written, same logic | 72,439 (-14,549) |
+| `444d3f6` | **Repaint only what changed**: a sprite or a text records the rows it drew over (`DIRT`) and only those are repainted instead of the whole column cleared; a wall band whose edges moved is repainted between the old and the new edge; the weapon is drawn column by column, only where its frame is not already standing | 61,756 (-10,683) |
+| `87cca9b` | **`scaleThing()`**: `65535/tz` as a subtraction loop for the high byte and eight shift-and-subtract steps (CMOC's `DIV16`: 975 cycles), the 16-bit products as 8x8 `MUL`s | 52,307 (-9,449) |
+| `1361bee` | **`thing()`**: culling and frame choice in assembly; `things+i` as a shift, not `MUL16`; `key()`'s strobe folded at compile time, not `shiftLeft` | 48,059 (-4,248) |
+| `83c8cf9` | **The still view**: when the view entries, blend, heading, hatching and door phases are what the last pass used and the page's signatures were made from them, a column is visited only for what a sprite left on it | 40,825 (-7,234) |
+| `fd4a04d` | **`things3d()`**: the loop over nearby things in assembly | 38,868 (-1,957) |
+| `0a6f2a7` | **`maxRay`** (a thing behind the picture's farthest wall skips the division; nothing in this view) and **the weapon stays** when its rows 124..159 were not touched | 36,747 (-2,121) |
+| `a3e7764` | **A leaner painter**: one pass down the column; a hollow band repaints its two edge rows; `DIRT` to `$FE00` | 36,054 (-693); turning 96,164 -> 80,357 |
+
+### One thing in the spawn corridor (cycles a picture, steady; the view without it, then what it adds)
+
+| case | `0493c18`: view + thing | now: view + thing | total, before -> now |
+|---|---|---|---|
+| guard at 1.5 cells | 49,995 + 37,882 | 8,914 + 46,632 | 87,877 -> 55,546 |
+| 2 cells | 44,138 + 26,662 | 8,041 + 29,532 | 70,800 -> 37,573 |
+| 3 cells | 44,144 + 16,103 | 8,047 + 19,894 | 60,247 -> 27,941 |
+| 4 cells | 44,143 + 13,284 | 8,041 + 15,124 | 57,427 -> 23,165 |
+| 6 cells | 44,144 + 8,578 | 8,042 + 8,571 | 52,722 -> 16,613 |
+| 8 cells | 44,144 + 7,961 | 8,041 + 7,836 | 52,105 -> 15,877 |
+| 12 cells | 44,138 + 7,402 | 8,041 + 7,231 | 51,540 -> 15,272 |
+| right edge, (10,20) angle 1 | 44,343 + 18,791 | 8,042 + 12,805 | 63,134 -> 20,847 |
+| half behind a pillar, (14,17) angle 27 | 46,136 + 8,663 | 8,049 + 5,511 | 54,799 -> 13,560 |
+| beside a nearer wall, (18,25) angle 0 | 44,144 + 8,186 | 8,041 + 5,123 | 52,330 -> 13,164 |
+| pickup, 2 cells | 44,144 + 7,681 | 8,041 + 7,579 | 51,825 -> 15,620 |
+
+**What did not get cheaper.** A close monster still adds up to about 46,000 cycles a picture: the empty view fell
+from 44,000 to 8,000, but a monster that stands still is still repainted and drawn again on every picture (its
+rows, its columns, and the weapon where it reaches below row 124), and with the view this cheap that is now most
+of the picture. The increment is a little larger than before because the old view already paid for clearing the
+weapon's five columns. Skipping a sprite that has not changed needs a record of what was drawn on each column of
+each page (about 320 bytes) and a second pass over the things; it is not done. The one-off frame scaled to a new
+width (`genFrame`, 17,000 cycles plus 9,000 per byte of width) is unchanged.
+
+### Same pictures: how it is checked
+
+* `test/harness/identity.cjs` plays a scripted run whose inputs change exactly at picture boundaries (the machine
+  is stepped one instruction at a time to the `$0200` store) and records a hash of the page on the screen and of
+  the game state at every picture: 1,665 pictures -- seeded walking, turning, strafing and firing from the spawn,
+  90 cells all over the map, monsters and pickups at every scale, at both edges, casting, in crowds, fireballs,
+  the still view, the hatching toggled, alternating views, three doors opened without moving, death, restart and
+  the level clear. The game depends on pictures drawn and not on time, so two builds that draw the same thing
+  give the same file whatever their speed. Every commit above gives the file `0493c18` gives; its SHA-256 is
+  pinned in `test/identity.sha256` and CI checks it.
+* `test/harness/sprites.cjs`: the same measurements and the same 12 PNGs as `0493c18`, byte for byte. The harness
+  itself changed in one way: it sampled `tdepth`, `c0` and `gW` at the next frame boundary, up to a field into the
+  next picture, where `actors()` has already projected the player's own offset and left `tdepth` at 0; once a
+  picture took under two fields the nearer-wall case read 0. It now stops on the instruction that stores `$0200`.
+  (One reported value differs, the `walls` entry for column 32 at the right edge: that is the byte after
+  `rayDistance[]`, not a wall.)
+* No rounding changed and nothing is intentionally different. The weapon argument: a mask-and-ink blit W satisfies
+  W(f(W(x))) = W(f(x)) for any sequence f of such blits, so a column that still carries the same weapon frame can
+  be drawn over and given the frame again, or left alone when nothing touched its rows.
+
+### RAM map
+
+* `DIRT`, 192 bytes at `$FE00-$FEBF`: per page and column, the first row a sprite or a text drew over, the row
+  after the last, and the weapon frame standing on the column. Above the stack (which starts at `$FE00` and grows
+  down) and below the I/O page; zeroed by `clearSignatures()`. Watched from power-on through 40 region loads, a
+  level clear and a restart, and over about 1,700 pictures of play: the only writers are `clearSignatures`, `columns`,
+  `markOne`, `weaponCols` and `dirtyAll`; nothing writes `$FEC0-$FEFF`.
+* `$F8C0-$F8FF` (the per-column dirty flags) is no longer used.
+* Stack: lowest S `$FD91` over the same runs (`0493c18`: `$FD8F`); the scaled-frame cache ends at `$FCFF`.
+* Everything else new is in the image's own bss.
+
+### Sound
+
+`audioSlice()` is still called once a column, 32 times a picture, four samples a call: the same samples on the
+same pictures (the encounter harness's SND_HURT check is unchanged). An effect is paced by the renderer, as it
+always was, so with pictures 1.5 to 2.7 times as frequent it plays that much faster. Pacing it by the field
+interrupt instead would be a change of behaviour and is left for the owner to decide.
+
 ## Measured exceptions
 
 Each is a deliberate trade, with what it bought and what it cost. The rule for a reclaim is fps ≥ baseline and

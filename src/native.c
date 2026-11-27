@@ -21,9 +21,11 @@ static byte *back;
 static const byte *source;
 static word length;static byte *unpackTarget;
 /* Fixed RAM outside the engine image (the image ends just under ASSETS at $5000): low RAM $0388-$03DF, above the
- * column cache (scene.h), zeroed by clearSignatures(); and $F800-$F97F, above the $E000 screen and below the
- * scaled-frame cache (actors). Nothing else writes either range (measured over play: only the stack, from $FDFF
- * down, lives above the screen). The harnesses read these #defines as symbols (test/harness/boot.cjs). */
+ * column cache (scene.h), zeroed by clearSignatures(); $F800-$F8BF and $F900-$F97F, above the $E000 screen and
+ * below the scaled-frame cache (actors); and DIRT at $FE00-$FEBF, above the stack. Nothing else writes these
+ * ranges (measured over play: only the stack, from $FDFF down to $FD91 at its deepest, lives between the cache
+ * and DIRT). $F8C0-$F8FF, once the per-column dirty flags, is no longer used. The harnesses read these #defines
+ * as symbols (test/harness/boot.cjs). */
 #define phase ((byte*)0x388)
 #define wind ((byte*)0xf800)
 #define waitForAttack ((byte*)0xf840)

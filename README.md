@@ -148,9 +148,12 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     node test/harness/regions.cjs cloadm run run/regions.json                 # stall of every disk region
     node test/harness/encounter.cjs cloadm run                                # imp attack, dodge, shotgun spread
     node test/harness/sprites.cjs cloadm run                                  # monster feet, size, screen edge, occlusion (PNGs in run/sprites/)
+    node test/harness/identity.cjs cloadm run run/pictures.txt                # a hash of every picture of a scripted run; must match test/identity.sha256
     ONE_LEVEL=1 node test/harness/route.cjs cloadm run                        # walks from the spawn to the exit
     node test/harness/swap.cjs cloadm run                                     # same binary, replacement level disk
     node test/harness/profile.cjs cloadm run run/shots                        # per-function time profile + PNGs
+    node tools/cycles-per-picture.mjs cloadm run                              # CPU cycles per picture, to the instruction (--keys LEFT: a turning view)
+    node tools/profile-cycles.mjs cloadm run                                  # the same window, cycles per function (self and inclusive)
     node test/harness/clock.cjs cloadm run                                    # level clock counts every field, loads included
     node test/harness/end-screen.cjs cloadm run                               # TIME mm:ss and KILLS on the level clear
     sh test/clock-mutants.sh cloadm run/wyrmfire.vdk                          # clock mutants must fail (needs CMOC + LWTOOLS)
