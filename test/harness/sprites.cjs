@@ -17,8 +17,13 @@ const GUARD = 1, AMMO = 6;
 (async () => {
   const s = await boot(repo, files);
   const read = (a) => s.readByte(a), put = (k, ...v) => s.pokeBytes(sym[k], v);
-  let field = 0;
-  const picture = () => { const n = read(0x200); while (read(0x200) === n) { s.runFrames(1); if (++field > 100000) throw Error('frame timeout'); } };
+  // One picture, stopping ON the instruction that stores $0200 (one instruction at a time, as
+  // tools/cycles-per-picture.mjs does). Sampling at the next frame boundary instead reads the engine's variables
+  // up to a field into the NEXT picture: actors() starts by projecting the player's own offset, which leaves
+  // tdepth at 0 until the thing is projected again, so a frame-quantised sample of tdepth depends on how fast the
+  // engine draws (it read 0 for the nearer-wall case once a picture took under two fields).
+  const m = s.machine;
+  const picture = () => { const n = read(0x200); let g = 0; while (read(0x200) === n) { m.runCycles(m.cycle + 0x7FFFFFFF, 1); if (++g > 60e6) throw Error('no picture; PC ' + m.cpu.pc.toString(16)); } };
   while (read(0x200) < 3) picture();
   const spawn = [read(boot.PACK + 7), read(boot.PACK + 8)];
   // the page on the screen: draw() leaves `back` on the OTHER one
