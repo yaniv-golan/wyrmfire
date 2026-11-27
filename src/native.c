@@ -477,7 +477,7 @@ asm void makeRuns(){
 /* Columns c0..c0+gW-1 of the frame: each one on the screen and not behind a nearer wall is drawn and marked
  * dirty; colHit gets 2 for any column drawn, 3 if one is in the aim window 13..19. The row runs and the scaled
  * frame are made at the first column that is drawn (colHit still 0), so a thing wholly behind walls costs neither. */
-static asm void drawColumns(){
+asm void drawColumns(){
  asm {
     clr _colHit
     clr _cOff
@@ -582,22 +582,163 @@ static asm void project(){
     rts
  }
 }
-/* Draw a thing hw2/2 map units tall at (th, tz) (1/32 cells), occluded per column by walls nearer than tdepth.
- * Returns 0 if nothing was drawn, 2 if drawn, 3 if drawn with a column in the aim window (13..19). */
-static byte drawScaled(const byte *shape,byte hw2){
- /* One division a thing: inv = 65535/tz (tz >= 18, so inv <= 3640). Height hw*512/tz = inv*(2*hw)/256, floor
-  * line 79 + 2560/tz = 79 + inv*10/256. */
- word inv=65535u/(word)tz,a;byte h=(byte)((inv*hw2)>>8),wpx=h-(h>>3),top;int left;
- yy=(byte)(88+((inv*10)>>8));mEnd=yy>168?160:yy-8;yy-=h;top=yy<8?0:yy-8;dH=h;mTop=top;
- /* Centre pixel 128 + 160*th/tz: 128*|th|/tz = (|th|/2)*inv/256 (|th| <= 1.25 tz keeps the product in a word),
-  * plus a quarter of it. The frame covers every byte column its true span [left, left+wpx) touches, so a column
-  * holds sprite exactly where the thing is. */
- a=((word)((th<0?-th:th)>>1)*inv)>>8;a+=a>>2;left=th<0?128-(int)a:128+(int)a;aimCol=(byte)(left>>3);left-=wpx>>1;
- c0=(sb)(((left+256)>>3)-32);gW=(byte)(((left+wpx+255)>>3)-31-c0);
- if((sb)gW<2)gW=2;if(gW>15)gW=15;
- if(c0>31||c0+(sb)gW<=0)return 0;
- dBase=back+(word)top*32;gSrc=shape;depthNow=tdepth;drawColumns();
- return colHit;
+/* Draw a thing dHw/2 map units tall at (th, tz) (1/32 cells), occluded per column by walls nearer than tdepth.
+ * colHit: 0 if nothing was drawn, 2 if drawn, 3 if drawn with a column in the aim window (13..19).
+ *
+ * One division a thing: inv = 65535/tz (tz >= 18, so inv <= 3640), by subtraction for the high byte (255/tz, at
+ * most 14) and eight shift-and-subtract steps for the low one. Height h = dHw*512/tz = (inv*dHw)>>8, floor line
+ * 79 + 2560/tz = 79 + ((inv*10)>>8), width wpx = h - h/8. Centre pixel 128 + 160*th/tz: 128*|th|/tz =
+ * ((|th|/2)*inv)>>8 (taken mod 256, as the 16-bit product was), plus a quarter of it. The frame covers every byte
+ * column its span [left, left+wpx) touches: c0 = floor(left/8), gW columns, 2..15. All products are 8x8 MULs. */
+static byte dHw,sTmp,wpx;static word inv,sX;static int left;
+asm void scaleThing(){
+ asm {
+    clr _colHit
+    clr _inv
+    ldd #255
+@hi cmpd _tz
+    blo @lo
+    subd _tz
+    inc _inv
+    bra @hi
+@lo ldx #8
+@bit orcc #1
+    rolb
+    rola
+    subd _tz
+    bcc @fit
+    addd _tz
+@fit rol _inv+1
+    leax -1,x
+    bne @bit
+    com _inv+1
+    lda _inv+1
+    ldb _dHw
+    mul
+    sta _sTmp
+    lda _inv
+    ldb _dHw
+    mul
+    addb _sTmp
+    stb _dH
+    lsrb
+    lsrb
+    lsrb
+    negb
+    addb _dH
+    stb _wpx
+    lda _inv+1
+    ldb #10
+    mul
+    sta _sTmp
+    lda _inv
+    ldb #10
+    mul
+    addb _sTmp
+    addb #88
+    tfr b,a
+    suba #8
+    cmpb #168
+    bls @e
+    lda #160
+@e  sta _mEnd
+    subb _dH
+    stb _yy
+    subb #8
+    bcc @t
+    clrb
+@t  stb _mTop
+    lda #32
+    mul
+    addd _back
+    std _dBase
+    ldd _th
+    bge @ap
+    clra
+    clrb
+    subd _th
+@ap asra
+    rorb
+    std _sX
+    lda _inv+1
+    mul
+    sta _sTmp
+    lda _sX+1
+    ldb _inv
+    mul
+    addb _sTmp
+    stb _sTmp
+    lda _sX
+    beq @nx
+    ldb _inv+1
+    mul
+    addb _sTmp
+    stb _sTmp
+@nx ldb _sTmp
+    lsrb
+    lsrb
+    clra
+    addb _sTmp
+    adca #0
+    tst _th
+    bpl @lp
+    coma
+    comb
+    addd #1
+@lp addd #128
+    std _left
+    asra
+    rorb
+    asra
+    rorb
+    asra
+    rorb
+    stb _aimCol
+    ldb _wpx
+    lsrb
+    stb _sTmp
+    ldd _left
+    subb _sTmp
+    sbca #0
+    std _left
+    inca
+    asra
+    rorb
+    asra
+    rorb
+    asra
+    rorb
+    subb #32
+    stb _c0
+    ldd _left
+    addb _wpx
+    adca #0
+    addd #255
+    asra
+    rorb
+    asra
+    rorb
+    asra
+    rorb
+    subb #31
+    subb _c0
+    cmpb #2
+    bge @g1
+    ldb #2
+@g1 cmpb #15
+    bls @g2
+    ldb #15
+@g2 stb _gW
+    lda _c0
+    cmpa #31
+    bgt @out
+    adda _gW
+    ble @out
+    lda _tdepth
+    sta _depthNow
+    jmp _drawColumns
+@out rts
+ }
 }
 static void actors(){
  byte i,n,k,kd;int near=127;
@@ -628,8 +769,8 @@ static void actors(){
     project();if(tz<18)continue;
     if(th>tz+(tz>>2)||th< -tz-(tz>>2))continue;
     /* pickups 2 map units tall, monsters 7 (the boss 8) */
-    if(kd>=6){drawScaled(pickupFrame,2*2);continue;}
-    k=drawScaled(kd==5?boss:wind[i]?impCast:kd>=3?imp:guard,kd==5?8*2:7*2);
+    if(kd>=6){gSrc=pickupFrame;dHw=2*2;scaleThing();continue;}
+    gSrc=kd==5?boss:wind[i]?impCast:kd>=3?imp:guard;dHw=kd==5?8*2:7*2;scaleThing();k=colHit;
     if(!k)continue;
     if(k==3&&tz<near*32){target=i;targetDepth=tdepth;near=(tz+31)>>5;}
     aimColumn[i]=aimCol;aimDepth[i]=tdepth;
