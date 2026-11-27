@@ -799,37 +799,104 @@ asm void thing(){
 @cull rts
  }
 }
+/* The player is standing on a pickup: tKind at pickAt. */
+static Thing *pickAt;
+void pickup(){
+ byte kd=tKind;
+ if(kd==6)ammo=ammo>180?200:ammo+20;
+ if(kd==7)health=health>75?100:health+25;
+ if(kd==8){gun=1;ownedShotgun=1;shells=shells>46?50:shells+4;}
+ if(kd>=9&&kd<=11)keys|=1<<(kd-9);
+ if(kd==12)shells=shells>46?50:shells+4;
+ if(kd==13)armor=100;
+ if(kd==14 && health<200)health++;
+ if(kd==15 && armor<200)armor++;
+ pickAt->kind=0;sound(SND_PICKUP);
+}
+/* Every thing findNearby() listed (within 18 cells on each axis), in list order: a pickup under the player is
+ * taken; anything else is drawn (thing()). A monster with a column in the aim window becomes the target when it
+ * is nearer than the one held, tz < 32*near with near = (tz+31)>>5 of the last one taken (127 to begin with), so
+ * near32 holds 32*near; every monster drawn records its aim column and depth for the shotgun.
+ * Occlusion depth is from the CELL CENTRE, which is where rayDistance is measured from (the view tables are per
+ * cell); projection is from the player's true position, as the blended walls are. */
+static byte *nPtr;static byte nLeft,ti;static int near32;
+asm void things3d(){
+ asm {
+    pshs u
+    ldd #4064
+    std _near32
+    lda _nearCount
+    lbeq @done
+    sta _nLeft
+    ldx #$f880
+@loop ldb ,x+
+    stx _nPtr
+    stb _ti
+    ldx #$f900
+    abx
+    lda #255
+    sta ,x
+    lda #4
+    mul
+    addd #_things
+    tfr d,u
+    lda 2,u
+    beq @next
+    sta _tKind
+    ldb ,u
+    subb _px
+    stb _tx
+    ldb 1,u
+    subb _py
+    stb _ty
+    cmpa #6
+    blo @see
+    orb _tx
+    bne @see
+    stu _pickAt
+    jsr _pickup
+    bra @next
+@see ldx #$f800
+    ldb _ti
+    lda b,x
+    sta _tWind
+    jsr _thing
+    lda _tKind
+    cmpa #6
+    bhs @next
+    lda _colHit
+    beq @next
+    cmpa #3
+    bne @aim
+    ldd _tz
+    cmpd _near32
+    bge @aim
+    addd #31
+    andb #$e0
+    std _near32
+    lda _ti
+    sta _target
+    lda _tdepth
+    sta _targetDepth
+@aim ldx #$f900
+    ldb _ti
+    abx
+    lda _aimCol
+    sta ,x
+    lda _tdepth
+    sta 64,x
+@next ldx _nPtr
+    dec _nLeft
+    lbne @loop
+@done puls u,pc
+ }
+}
 static void actors(){
- byte i,n,k,kd;int near=127;
  /* the player's offset from the cell centre, in 1/16 cells, turned into the view: tz and th are then the
   * cell-centre values plus these (exactly: 16*zc+zoff >> 4 = zc + (zoff>>4)) */
  tca=cosine[angle];tsa=cosine[(angle+24)&31];
  tx=8-((byte)px>>4);ty=8-((byte)py>>4);zoff=0;hoff=0;project();zoff=tz>>4;hoff=th>>4;
- target=255;
- for(n=0;n<nearCount;n++){
-    i=nearby[n];aimColumn[i]=255;
-    Thing *o=(Thing*)((byte*)things+((word)i<<2));
-    kd=o->kind;if(!kd)continue;
-    /* findNearby keeps every thing here within 18 cells on each axis */
-    tx=o->x-(byte)(px>>8);ty=o->y-(byte)(py>>8);
-    if(kd>=6 && !tx && !ty){
-       if(kd==6)ammo=ammo>180?200:ammo+20;
-       if(kd==7)health=health>75?100:health+25;
-       if(kd==8){gun=1;ownedShotgun=1;shells=shells>46?50:shells+4;}
-       if(kd>=9&&kd<=11)keys|=1<<(kd-9);
-       if(kd==12)shells=shells>46?50:shells+4;
-       if(kd==13)armor=100;
-       if(kd==14 && health<200)health++;
-       if(kd==15 && armor<200)armor++;
-       o->kind=0;sound(SND_PICKUP);continue;
-    }
-    /* Occlusion depth from the CELL CENTRE, which is where rayDistance is measured from (the view tables are per
-     * cell); projection from the player's true position, as the blended walls are. */
-    tKind=kd;tWind=wind[i];thing();k=colHit;
-    if(kd>=6||!k)continue;
-    if(k==3&&tz<near*32){target=i;targetDepth=tdepth;near=(tz+31)>>5;}
-    aimColumn[i]=aimCol;aimDepth[i]=tdepth;
- }
+ target=255;things3d();
 }
 static byte oldHP[2],oldAmmo[2],oldKeys[2],oldLevel[2],valid[2];
 #include "floppy.h"
