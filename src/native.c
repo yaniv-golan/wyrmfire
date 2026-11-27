@@ -197,7 +197,9 @@ static void tune(const byte *score){
  IO(0xff20)=128;
  irqRelease();
 }
-static byte key(byte coln,byte row){IO(0xff02)=~(1<<coln);return !(IO(0xff00)&row);}
+/* key(column, row bit): the column's strobe is a constant, so the shift is the compiler's, not a run-time loop. */
+static byte keyAt(byte strobe,byte row){IO(0xff02)=strobe;return !(IO(0xff00)&row);}
+#define key(coln,row) keyAt((byte)~(1<<(coln)),row)
 static byte *at(byte x,byte y){return GRID+((word)y<<7)+x;}
 static byte cross(byte x,byte y,byte nx,byte ny){
  byte *a=at(x,y),*b=at(nx,ny);
@@ -532,7 +534,7 @@ asm void drawColumns(){
 /* The thing's place in the view: tz = tx*tca + ty*tsa (+ zoff), th = tx*tsa - ty*tca (+ hoff), tdepth = the
  * cell-centre depth (tx*tca+ty*tsa+3)>>3, at least 0. Signed 8x8 products in asm: CMOC multiplies two signed
  * chars into a CHAR (its MUL keeps only B), which loses everything past 127. */
-static asm void project(){
+asm void project(){
  asm {
     lda _tx
     ldb _tca
@@ -740,6 +742,60 @@ asm void scaleThing(){
 @out rts
  }
 }
+/* One thing at (tx, ty) cells from the player, of kind tKind (a monster that is winding up when tWind): project
+ * it, drop it when it is nearer than 18/32 of a cell or more than 1.25 depths to either side (colHit 0), choose
+ * its frame and height (pickups 2 map units tall, monsters 7, the boss 8) and draw it (scaleThing). */
+static byte tKind,tWind;
+asm void thing(){
+ asm {
+    clr _colHit
+    jsr _project
+    ldd _tz
+    cmpd #18
+    blt @cull
+    lsra
+    rorb
+    lsra
+    rorb
+    addd _tz
+    cmpd _th
+    blt @cull
+    coma
+    comb
+    addd #1
+    cmpd _th
+    bgt @cull
+    lda _tKind
+    cmpa #6
+    blo @mon
+    ldb #4
+    ldx #_pickupFrame
+    bra @go
+@mon ldb #14
+    ldx #$5008
+    cmpa #5
+    bne @m1
+    ldb #16
+    ldx #$5018
+    bra @set
+@m1 tst _tWind
+    beq @m2
+    ldx #$5010
+    bra @set
+@m2 cmpa #3
+    blo @set
+    ldx #$500c
+@set pshs b
+    ldd ,x
+    addd #$5000
+    tfr d,x
+    puls b
+@go stb _dHw
+    stx _gSrc
+    jmp _scaleThing
+@cull rts
+ }
+}
 static void actors(){
  byte i,n,k,kd;int near=127;
  /* the player's offset from the cell centre, in 1/16 cells, turned into the view: tz and th are then the
@@ -749,7 +805,7 @@ static void actors(){
  target=255;
  for(n=0;n<nearCount;n++){
     i=nearby[n];aimColumn[i]=255;
-    Thing *o=things+i;
+    Thing *o=(Thing*)((byte*)things+((word)i<<2));
     kd=o->kind;if(!kd)continue;
     /* findNearby keeps every thing here within 18 cells on each axis */
     tx=o->x-(byte)(px>>8);ty=o->y-(byte)(py>>8);
@@ -766,12 +822,8 @@ static void actors(){
     }
     /* Occlusion depth from the CELL CENTRE, which is where rayDistance is measured from (the view tables are per
      * cell); projection from the player's true position, as the blended walls are. */
-    project();if(tz<18)continue;
-    if(th>tz+(tz>>2)||th< -tz-(tz>>2))continue;
-    /* pickups 2 map units tall, monsters 7 (the boss 8) */
-    if(kd>=6){gSrc=pickupFrame;dHw=2*2;scaleThing();continue;}
-    gSrc=kd==5?boss:wind[i]?impCast:kd>=3?imp:guard;dHw=kd==5?8*2:7*2;scaleThing();k=colHit;
-    if(!k)continue;
+    tKind=kd;tWind=wind[i];thing();k=colHit;
+    if(kd>=6||!k)continue;
     if(k==3&&tz<near*32){target=i;targetDepth=tdepth;near=(tz+31)>>5;}
     aimColumn[i]=aimCol;aimDepth[i]=tdepth;
  }

@@ -37,7 +37,7 @@ static void releaseBall(const Thing *o){
 static void simulate(){
  byte n,j;findNearby();
  for(n=0;n<nearCount;n++){
-   byte i=nearby[n];Thing *o=things+i;int x,y,ax,ay;
+   byte i=nearby[n];Thing *o=(Thing*)((byte*)things+((word)i<<2));int x,y,ax,ay;
    if(o->kind==0||o->kind>5)continue;
    if(waitForAttack[i]){waitForAttack[i]--;continue;}
    if(wind[i]){
