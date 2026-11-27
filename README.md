@@ -147,6 +147,7 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     CLOADM=$PWD/cloadm WYRMFIRE_BUILD=run node --test test/smoke.test.mjs     # boots, waits for the first in-game frame
     node test/harness/regions.cjs cloadm run run/regions.json                 # stall of every disk region
     node test/harness/encounter.cjs cloadm run                                # imp attack, dodge, shotgun spread
+    node test/harness/sprites.cjs cloadm run                                  # monster feet, size, screen edge, occlusion (PNGs in run/sprites/)
     ONE_LEVEL=1 node test/harness/route.cjs cloadm run                        # walks from the spawn to the exit
     node test/harness/swap.cjs cloadm run                                     # same binary, replacement level disk
     node test/harness/profile.cjs cloadm run run/shots                        # per-function time profile + PNGs

@@ -1,8 +1,7 @@
 /* Projectiles in 8.8 cell coordinates. Simulation never depends on the view angle. */
 typedef struct {word x,y;int dx,dy;byte life;} Missile;
 static Missile balls[4];
-static byte wind[MAX_OBJECTS],waitForAttack[MAX_OBJECTS],aimColumn[MAX_OBJECTS],aimDepth[MAX_OBJECTS];
-static byte thrown,impacts,wallHits,spreadVictims,animation;
+static byte thrown,impacts,wallHits,spreadVictims;
 static byte clearLine(byte x,byte y,byte tx,byte ty){
  int dx=(int)tx-x,dy=(int)ty-y,n,step;word fx=((word)x<<8)+128,fy=((word)y<<8)+128;
  int ax=dx<0?-dx:dx,ay=dy<0?-dy:dy;
@@ -67,8 +66,8 @@ static void simulate(){
 static void missiles(){
  byte j;for(j=0;j<4;j++)if(balls[j].life){
     int x=(int)(balls[j].x-px)>>4,y=(int)(balls[j].y-py)>>4;
-    int z=(x*cosine[angle]+y*cosine[(angle+24)&31])>>5;
-    int side=(x*cosine[(angle+24)&31]-y*cosine[angle])>>5;
+    int z=(x*tca+y*tsa)>>5;   /* tca, tsa: this picture's cosines, set by actors() just before */
+    int side=(x*tsa-y*tca)>>5;
     if(z>2&&side<z&&side> -z){int col=16+side*20/z;if(col>=1&&col<31&&z/4<=rayDistance[col]+2)
        sprite(fireball,col-1,74,2,12);}
  }

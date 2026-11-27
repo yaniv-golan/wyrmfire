@@ -19,12 +19,23 @@ Directory copies on tracks 16 and 20 (logical sectors 576-593 and 720-737).
 
 | Range | Use |
 |---|---|
+| `$0200-$0207` | picture markers the harnesses read (frame count, angle, cell, health, ammo, level, kills) |
+| `$0208-$0387` | renderer column cache (2 pages x 32 columns x 6 bytes) |
+| `$0388-$03C7`, `$03C8-$03DF` | door phases; sprite row runs (one byte per source row) |
 | `$0400-$1BFF`, `$E000-$F7FF` | screens |
 | `$1C00-$4FFF` | engine (code, data, font, tables) |
 | `$5000-$6DFF` | ASSETS: HGA1 block (7,680 bytes) |
 | `$6E00-$79FF` | PACK: HGR2 header (3,072 bytes) |
 | `$7A00-$ABFF` | AREA: unpacked region; the compressed region is read to the top of this window and unpacked in place |
 | `$AC00-$DFFF` | GRID: up to 104 rows of 128 cells (13,312 bytes) |
+| `$F800-$F97F` | engine arrays outside the image: `wind`, `waitForAttack`, `nearby`, `dirtyCols` (2 x 32), `aimColumn`, `aimDepth` (64 bytes each) |
+| `$F980-$F9DF` | scaled-frame cache entries ({source, data, width}, ended by a zero source) |
+| `$F9E0-$FCFF` | scaled-frame cache: monster and pickup frames scaled across to 3-15 bytes, 24 rows |
+| `$FD00-$FDFF` | stack (from `$FE00` down; lowest seen over a whole level: `$FD9B`) |
+
+The ranges outside the image are not loaded; `main()` zeroes `$0208-$03FD`, and `readLevel()` sets what the
+engine reads from `$F800` up before the first picture. `test/harness/boot.cjs` reads their addresses from the
+`#define`s in `src/`, so the harnesses can name them like the symbols in the link map.
 
 ## HGR2 level pack (`WYRMFIRE.LVL`)
 

@@ -150,6 +150,8 @@ jobs:
         run: node test/harness/swap.cjs cloadm build
       - name: Encounter harness
         run: node test/harness/encounter.cjs cloadm build
+      - name: Sprites on the floor, scaled with depth, occluded per column
+        run: node test/harness/sprites.cjs cloadm build
       # The display harnesses read the RENDERED frame (or the loader's own page), not screenText: they are what
       # catch a screen a player cannot see. They need build/loader.lst, which the engine artifact now carries.
       - name: Loading screen shows its controls
@@ -171,7 +173,9 @@ jobs:
         if: always()
         with:
           name: smoke
-          path: shots
+          path: |
+            shots
+            build/sprites
           retention-days: 7
 
   clock-mutants:

@@ -80,10 +80,10 @@ static byte loadArea(byte zone){
  * in the engine image: nothing writes $0208-$03FF while the engine runs (measured: over 3,000 fields of play the
  * only CPU writes below $0400 are the $0200-$0207 markers), and the 384 bytes are what lets the field clock and
  * the credits screen both fit below ASSETS at $5000. Low RAM is not part of the loaded image, so main() zeroes
- * it before the first picture (clearSignatures). */
+ * it before the first picture (clearSignatures), together with the door phases and the sprite row runs above it
+ * ($0388-$03DF, native.c): 502 bytes in all. */
 #define SIGNATURES ((byte*)0x208)
-static void clearSignatures(){word i;for(i=0;i<384;i++)SIGNATURES[i]=0;}
-static byte doorVis[32],wallTop[32],wallBottom[32];
+static void clearSignatures(){word i;for(i=0;i<502;i++)SIGNATURES[i]=0;}
 static const byte *view,*adjacent;
 static byte blendWeight;
 static byte angularIndex,sampled[4];
@@ -191,7 +191,6 @@ static void eraseBand(byte top,byte bottom,byte ink){
  if(ink){runSize=bottom-top+1;runInk=0;putRun();}
  else{*columnOut=0;back[((word)bottom<<5)+col]=0;}
 }
-static byte doorAhead;
 static void scene(){
  byte x=px>>8,y=py>>8,otherX=x,otherY=y,start=angle*3;
  byte a,b,c,d,ink,edge,j;byte *sig,*dirty;const byte *vp;
@@ -204,18 +203,17 @@ static void scene(){
  adjacent=0;
  if(blendWeight>8&&areaAt(otherX,otherY)==currentArea&&cross(x,y,otherX,otherY))adjacent=viewAt(otherX,otherY);
 
- sig=page?SIGNATURES+192:SIGNATURES;dirty=dirtyCols[page];
+ sig=page?SIGNATURES+192:SIGNATURES;dirty=dirtyCols(page);
  for(col=0;col<32;col++,sig+=6,dirty++){
     int k=(int)start+rayOffset[col];audioSlice();
     if(k<0)k+=96;else if(k>=96)k-=96;j=(byte)k;
     angularIndex=j;vp=view+j;samples();a=sampled[0];b=sampled[1];c=sampled[2];d=sampled[3];
     rayDistance[col]=vp[384];ink=vp[672];
-    edge=vp[576];doorVis[col]=edge>1;
+    edge=vp[576];
     if(edge>1){byte lift=phase[edge-1];if(lift>=8){c=d=0;}else{d-=((word)(d-c)*lift)>>3;if(lift<6)rayDistance[col]=vp[480];}}
     if(!edge)c=d=0;
     edge=edge>1?0x99:((ink&4)?0x80:0x00);
     ink=(ink&2)?0x80:((ink&1)?0xff:(shading?0x11:0));
-    wallTop[col]=a;wallBottom[col]=b;
     if(!*dirty&&sig[0]==a&&sig[1]==b&&sig[2]==c&&sig[3]==d&&sig[4]==ink&&sig[5]==edge)continue;
     if(*dirty||((sig[4]||sig[5])&&(sig[1]-sig[0]>56))){columnOut=back+col;clearColumn();}
     else{eraseBand(sig[0],sig[1],sig[4]);eraseBand(sig[2],sig[3],sig[5]);}

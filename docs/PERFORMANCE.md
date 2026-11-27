@@ -112,6 +112,49 @@ both phase effects of the same two early draws, not a speed difference.
   **Accepted by the owner, 2026-11-25**, relayed by the PM: the waiver above is extended to dodge 12.96 → 12.14,
   and the source check stays. The baselines stay unrestated.
 
+### Monster and pickup sprites scaled with depth, feet on the floor, occluded per column — **PENDING owner review**
+
+- **Bought** (the owner ruled distance scaling a must): monsters and pickups stand on the floor line of the wall
+  projection (79 + 640/z, z in map units) instead of floating above it, are world height × 128 / z rows tall
+  (7 map units, the boss 8, pickups 2) with the art's aspect across, are clipped at both screen edges (a monster
+  in column 31 used to be culled) and are depth-tested per 8-pixel column, so a monster half behind a pillar shows
+  its visible half instead of vanishing or showing whole. Measured by `test/harness/sprites.cjs`.
+- **How:** frames are scaled across once into a cache in free RAM above the `$E000` screen (`genFrame`, any width
+  3-15 bytes; width 2 is the asset itself and never cached) and down at draw time by repeating or skipping source
+  rows (`makeRuns`), one column at a time (`blitColumn`). A thing pays one division (a reciprocal of its depth);
+  the row runs and the frame are made only once one of its columns proves visible.
+- **Cost, cycles per picture** (`tools/cycles-per-picture.mjs`, N = 1000 after 3; the spawn view has 10 things
+  within 18 cells, most behind walls): **79,082 → 86,988 (+7,906, +10.0%)**. Encounter **15.63 / 12.14 / 10.29 →
+  15.66 / 12.00 / 10.00**. Route resident **321 fr / 2,562 flds, median 8, max 11 → 320 / 2,730, median 9, max
+  17**; region changes 16 / 723, median 49, max 63 → 16 / 717, median 50, max 60; the level 3,708 → 3,873 fields.
+  Regions: load median 45 → 46 (max 67 → 71), stall median 38 → 39, max 63 → 63. `program_end` $4FDC → **$4FF7**.
+- **Per case** (one guard straight ahead in the spawn corridor unless named; cycles a picture over the same view
+  with the thing out of range: old engine **47,096**, new **44,143**, the new one being cheaper with nothing to
+  draw because `scene()` no longer stores three unused per-column arrays):
+
+| case | old: + cycles | new: + cycles (steady) | new: first picture at a new width |
+|---|---|---|---|
+| 1.5 cells | +11,673 | +43,729 | +142,723 |
+| 2 cells | +5,828 | +26,656 | +107,916 |
+| 3 cells | +5,828 | +16,143 | +80,551 |
+| 4 cells | +5,819 | +13,291 | +66,746 |
+| 6 cells | +5,830 | +8,580 | (width 2: no scaling) |
+| 8 cells | +5,830 | +7,967 | (width 2) |
+| 12 cells | +5,819 | +7,396 | (width 2) |
+| right edge, (10,20) angle 1 | +2,940 (culled) | +18,945 | +72,421 |
+| half behind a pillar, (14,17) angle 27 | +4,820 | +10,652 | (width 2) |
+| beside a nearer wall, (18,25) angle 0 | +10,098 | +8,176 | (width 2) |
+| pickup, 2 cells | +3,029 | +7,676 | (width 2) |
+
+  The steady cost grows with the area drawn: a close monster covers many columns, and every column a sprite
+  touched is cleared and redrawn by `scene()` on that page's next picture. A frame scaled to a new width costs
+  about 17,000 cycles plus 9,000 per byte of width, once (measured: widths 4, 5, 7, 9 at 4, 3, 2, 1.5
+  cells cost 53,455, 64,408, 81,260, 98,994 cycles over the steady picture); the route made 35 such frames in 337 pictures (3 pictures
+  made more than one). The cache holds 800 bytes; when a frame does not fit, it is emptied.
+- **Why it is pending:** fps ≥ baseline fails on dodge and spread and the cost is per frame, so the phase arm of
+  the gate does not cover it; the owner's ruling makes scaling required, and this entry is for the owner to accept
+  or send back. **The baseline numbers stay exactly as they are.**
+
 ### Per-commit measurement, `5b2b4c1` (×8) to the branch tip
 
 Every commit built on its own and measured with the same three encounter cases, plus route and regions. This is

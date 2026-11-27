@@ -7,6 +7,8 @@
 //   const s = await require('./boot.cjs')(cloadmDir, { bin, vdk });
 const fs = require('node:fs'), path = require('node:path');
 
+const ROOT = path.resolve(__dirname, '../..');
+
 function emu(repo) { return require(path.resolve(repo, 'js/emu.js')); }
 
 async function boot(repo, { bin, vdk }) {
@@ -22,16 +24,19 @@ async function boot(repo, { bin, vdk }) {
   return s;
 }
 
-// Symbols from the CMOC link map: { px: 0x1234, ... }
+// Symbols from the CMOC link map: { px: 0x1234, ... }, plus the arrays the engine keeps at fixed addresses outside
+// its image, from their `#define name ((byte*)0xADDR)` lines in src/ (they are not in the map).
 function symbols(map) {
-  return Object.fromEntries([...fs.readFileSync(map, 'utf8').matchAll(/^Symbol: _(\w+) \(native\.o\) = ([0-9A-F]+)/gm)].map((m) => [m[1], parseInt(m[2], 16)]));
+  const fixed = {};
+  for (const f of fs.readdirSync(path.join(ROOT, 'src')).filter((n) => /\.[ch]$/.test(n)))
+    for (const m of fs.readFileSync(path.join(ROOT, 'src', f), 'utf8').matchAll(/^#define (\w+)(?:\(p\))? \(\((?:byte|word) ?\*\)0x([0-9a-f]+)/gim)) fixed[m[1]] = parseInt(m[2], 16);
+  return { ...fixed, ...Object.fromEntries([...fs.readFileSync(map, 'utf8').matchAll(/^Symbol: _(\w+) \(native\.o\) = ([0-9A-F]+)/gm)].map((m) => [m[1], parseInt(m[2], 16)])) };
 }
 
 // Files for a run. DIR must hold wyrmfire.vdk (a level disk from the
 // converter); wyrmfire.bin and engine.map are taken from DIR when present
 // (a fresh tools/build-engine.sh build), else from the committed
 // bin/wyrmfire.bin and its symbol list bin/wyrmfire.sym, so no CMOC is needed.
-const ROOT = path.resolve(__dirname, '../..');
 function layout(dir) {
   const pick = (own, committed) => (fs.existsSync(path.join(dir, own)) ? path.join(dir, own) : path.join(ROOT, 'bin', committed));
   return { bin: pick('wyrmfire.bin', 'wyrmfire.bin'), vdk: path.join(dir, 'wyrmfire.vdk'), map: pick('engine.map', 'wyrmfire.sym') };

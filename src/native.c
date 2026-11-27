@@ -15,14 +15,23 @@ typedef struct {byte x,y,kind,hp;} Thing;
 static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
 static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
-static byte turn,rayDistance[32],col,dist,side,cellFlags,lastH;
+static byte turn,rayDistance[32],col;
 static word px,py; /* high byte = map cell, low byte = fraction */
-static const sb *vx,*vy;
-static byte *back,*origin;
-static byte fx;
+static byte *back;
 static const byte *source;
 static word length;static byte *unpackTarget;
-static byte phase[64],movingDoor,rise;
+/* Fixed RAM outside the engine image (the image ends just under ASSETS at $5000): low RAM $0388-$03DF, above the
+ * column cache (scene.h), zeroed by clearSignatures(); and $F800-$F97F, above the $E000 screen and below the
+ * scaled-frame cache (actors). Nothing else writes either range (measured over play: only the stack, from $FDFF
+ * down, lives above the screen). The harnesses read these #defines as symbols (test/harness/boot.cjs). */
+#define phase ((byte*)0x388)
+#define wind ((byte*)0xf800)
+#define waitForAttack ((byte*)0xf840)
+#define nearby ((byte*)0xf880)
+#define dirtyCols(p) ((byte*)0xf8c0+((word)(p)<<5))
+#define aimColumn ((byte*)0xf900)
+#define aimDepth ((byte*)0xf940)
+static byte movingDoor,rise;
 static void animateDoor(){byte i;if(!movingDoor)return;rise=++phase[movingDoor];if(rise==7)for(i=0;i<PACK[10];i++)if(doorGroups[i]==movingDoor)GRID[doorCells[i]]&=15;if(rise>=8)movingDoor=0;}
 static byte loadArea(byte zone);static byte areaAt(byte x,byte y);
 
@@ -65,7 +74,7 @@ static void startLevel(){
  movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte shading;
-static byte dirtyCols[2][32],page;
+static byte page;
 static byte *blitDest;
 static byte blitRows,blitWidth;
 static asm void blit(){
@@ -92,7 +101,7 @@ static asm void blit(){
 static void sprite(const byte *shape,byte col0,byte row,byte w,byte h){
  byte j;if(row>=160 || col0+w>32)return;
  source=shape;blitDest=back+((word)row<<5)+col0;blitWidth=w;blitRows=row+h>160?160-row:h;
- for(j=0;j<w;j++)dirtyCols[page][col0+j]=1;
+ for(j=0;j<w;j++)dirtyCols(page)[col0+j]=1;
  blit();
 }
 static void text(byte x,byte y,const char *s){
@@ -221,7 +230,7 @@ static void cue(byte finish){
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
  else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
  tune(finish?victoryNotes:interNotes);
- for(i=0;i<32;i++){dirtyCols[0][i]=1;dirtyCols[1][i]=1;}
+ for(i=0;i<32;i++){dirtyCols(0)[i]=1;dirtyCols(1)[i]=1;}
 }
 static void use(){
  byte x=px>>8,y=py>>8;int j;
@@ -234,12 +243,12 @@ static void use(){
  x=nx;y=ny;
  }
 }
-static byte target,nearby[MAX_OBJECTS],nearCount;
+static byte target,nearCount;
 static asm void findNearby(){
  asm {
     pshs u,y
     ldx #_things
-    ldy #_nearby
+    ldy #$f880
     clr _nearCount
     clrb
 @loop cmpb _count
@@ -264,35 +273,357 @@ static asm void findNearby(){
 @done puls y,u,pc
  }
 }
+static sb tx,ty,tca,tsa;static int tz,th,zoff,hoff;static byte tdepth;
 #include "combat.h"
+/* MONSTERS AND PICKUPS, SCALED WITH DEPTH. The wall projection is the converter's (buildAtlas screen()):
+ * row = 79 - (height - eyes) * 128 / z, z in map units (8 a cell), eyes 5 above the floor. A thing stands on the
+ * floor, so its feet are at 79 + 640/z and it is (world height) * 128 / z rows tall; here z is in 1/32 cells
+ * (z_map = z/4), so feet = 79 + 2560/z and rows = height * 512/z. The level data has no per-cell floor heights,
+ * so the thing's floor is taken as the player's (flat floors; a step between them is not shown).
+ *
+ * Width follows the art's aspect stretched as the walls are (160 px per unit of horiz/z across, 128 rows down):
+ * 7/8 of the height, drawn over the whole bytes that span touches (2..15: never under the asset's own 2, which
+ * needs no scaling). Frames are scaled across once into a cache (genFrame) and down at
+ * draw time by repeating or skipping source rows (runs[]), one 8-pixel column at a time, so EVERY column gets its
+ * own depth test against the walls (rayDistance) and is clipped to the screen on both sides. */
+#define runs ((byte*)0x3c8)
+static byte aimCol;
+static byte *colDest;static const byte *colSrc;
+asm void blitColumn(){
+ asm {
+    pshs u,y
+    ldx _colDest
+    ldu _colSrc
+    ldy #$03c8
+@src ldb ,y+
+    beq @next
+    lda ,u
+    beq @solid
+    inca
+    beq @clear
+@px lda ,x
+    anda ,u
+    ora 1,u
+    sta ,x
+    leax 32,x
+    decb
+    bne @px
+    bra @next
+@solid lda 1,u
+@op sta ,x
+    leax 32,x
+    decb
+    bne @op
+    bra @next
+@clear lda #32
+    mul
+    leax d,x
+@next ldb _gStride
+    leau b,u
+    cmpy #$03e0
+    bne @src
+    puls y,u,pc
+ }
+}
+/* Scale one 16x24 mask/ink frame across to gW bytes, row-major as the assets are (2*gW bytes a row), nearest
+ * pixel. oM and oK are adjacent (one std stores both). */
+static const byte *gSrc;static byte *gDst;static byte gW,gStride,gN,gRows,gCols,gBits,oM,oK;static word gM,gK;
+asm void genFrame(){
+ asm {
+    pshs u,y
+    ldx _gDst
+    lda #24
+    sta _gRows
+@row ldu _gSrc
+    lda ,u
+    ldb 2,u
+    std _gM
+    lda 1,u
+    ldb 3,u
+    std _gK
+    leau 4,u
+    stu _gSrc
+    ldb _gN
+    lda _gW
+    sta _gCols
+@col lda #8
+    sta _gBits
+@bit lda _gM
+    rola
+    rol _oM
+    lda _gK
+    rola
+    rol _oK
+    subb #16
+    bgt @keep
+@shift lsl _gM+1
+    rol _gM
+    lsl _gK+1
+    rol _gK
+    addb _gN
+    ble @shift
+@keep dec _gBits
+    bne @bit
+    ldd _oM
+    std ,x++
+    dec _gCols
+    bne @col
+    dec _gRows
+    bne @row
+    puls y,u,pc
+ }
+}
+/* The scaled-frame cache: free RAM above the $E000 screen, below the stack, never written by anything else
+ * (measured): the frames at $F9E0-$FCFF, 2*width bytes a row, and their {source, data, width} entries at
+ * $F980, ended by a zero source (a cached frame is at least 144 bytes, so at most 5 entries). Width 2 is the asset
+ * as it is, never cached. */
+#define CACHE ((byte*)0xf9e0)
+#define scaledTable ((word*)0xf980)
+static byte *cacheTop;static const byte *gFrame;
+asm void scaledFrame(){
+ asm {
+    ldd _gSrc
+    std _gFrame
+    lda _gW
+    cmpa #2
+    beq @hit2
+    ldx #$f980
+@look ldd ,x
+    beq @miss
+    cmpd _gSrc
+    bne @nx
+    lda 4,x
+    cmpa _gW
+    beq @hit
+@nx leax 5,x
+    bra @look
+@hit ldd 2,x
+    std _gFrame
+@hit2 rts
+@miss lda _gW
+    ldb #48
+    mul
+    addd _cacheTop
+    cmpd #$fd00
+    bls @alloc
+    ldd #$f9e0
+    std _cacheTop
+    ldx #$f980
+@alloc ldd _gSrc
+    std ,x
+    clr 5,x
+    clr 6,x
+    ldd _cacheTop
+    std 2,x
+    std _gFrame
+    std _gDst
+    lda _gW
+    sta 4,x
+    ldb #48
+    mul
+    addd _cacheTop
+    std _cacheTop
+    lda _gW
+    lsla
+    lsla
+    lsla
+    sta _gN
+    jmp _genFrame
+ }
+}
+/* The pickups' frame: a white pill with a black rim, 16x24 like the monsters'. */
+static const byte pickupFrame[96]={248,0,31,0,240,7,15,224,224,15,7,240,192,31,3,248,128,63,1,252,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,0,127,0,254,128,63,1,252,192,31,3,248,224,15,7,240,240,7,15,224,248,0,31,0};
+/* runs[s]: how many screen rows source row s covers, rows clipped to 0..159. Every source row covers floor(acc/24)
+ * rows as acc steps by the height; yy is the row + 8 (the top is never above -5), so the clip is 8..167. */
+static byte dH,yy,acc,cc,cnt,colHit,depthNow,cOff;static sb c0;static byte *dBase;
+asm void makeRuns(){
+ asm {
+    ldx #$03c8
+    clr _acc
+@s  lda _acc
+    adda _dH
+    clrb
+@q  cmpa #24
+    blo @d
+    suba #24
+    pshs a
+    lda _yy
+    inc _yy
+    cmpa #8
+    blo @o
+    cmpa #168
+    bhs @o
+    incb
+@o  puls a
+    bra @q
+@d  sta _acc
+    stb ,x+
+    cmpx #$03e0
+    bne @s
+    rts
+ }
+}
+/* Columns c0..c0+gW-1 of the frame: each one on the screen and not behind a nearer wall is drawn and marked
+ * dirty; colHit gets 2 for any column drawn, 3 if one is in the aim window 13..19. The row runs and the scaled
+ * frame are made at the first column that is drawn (colHit still 0), so a thing wholly behind walls costs neither. */
+static asm void drawColumns(){
+ asm {
+    clr _colHit
+    clr _cOff
+    lda _gW
+    lsla
+    sta _gStride
+    ldb _c0
+    stb _cc
+    lda _gW
+    sta _cnt
+@col ldb _cc
+    cmpb #31
+    bhi @skip
+    ldx #_rayDistance
+    lda b,x
+    inca
+    cmpa _depthNow
+    blo @skip
+    tst _colHit
+    bne @made
+    jsr _makeRuns
+    jsr _scaledFrame
+@made ldb _cc
+    ldx _dBase
+    abx
+    stx _colDest
+    ldx _gFrame
+    ldb _cOff
+    abx
+    stx _colSrc
+    jsr _blitColumn
+    ldx #$f8c0
+    tst _page
+    beq @p0
+    leax 32,x
+@p0 ldb _cc
+    lda #1
+    sta b,x
+    inca
+    subb #13
+    cmpb #6
+    bhi @nh
+    inca
+@nh ora _colHit
+    sta _colHit
+@skip inc _cOff
+    inc _cOff
+    inc _cc
+    dec _cnt
+    bne @col
+    rts
+ }
+}
+/* The thing's place in the view: tz = tx*tca + ty*tsa (+ zoff), th = tx*tsa - ty*tca (+ hoff), tdepth = the
+ * cell-centre depth (tx*tca+ty*tsa+3)>>3, at least 0. Signed 8x8 products in asm: CMOC multiplies two signed
+ * chars into a CHAR (its MUL keeps only B), which loses everything past 127. */
+static asm void project(){
+ asm {
+    lda _tx
+    ldb _tca
+    bsr @smul
+    std _tz
+    lda _ty
+    ldb _tsa
+    bsr @smul
+    addd _tz
+    bpl @pos
+    clr _tdepth
+    bra @dz
+@pos pshs d
+    addd #3
+    lsra
+    rorb
+    lsra
+    rorb
+    lsra
+    rorb
+    stb _tdepth
+    puls d
+@dz addd _zoff
+    std _tz
+    lda _tx
+    ldb _tsa
+    bsr @smul
+    addd _hoff
+    std _th
+    lda _ty
+    ldb _tca
+    bsr @smul
+    pshs d
+    ldd _th
+    subd ,s++
+    std _th
+    rts
+@smul pshs d
+    mul
+    tst ,s
+    bpl @s1
+    suba 1,s
+@s1 tst 1,s
+    bpl @s2
+    suba ,s
+@s2 leas 2,s
+    rts
+ }
+}
+/* Draw a thing hw2/2 map units tall at (th, tz) (1/32 cells), occluded per column by walls nearer than tdepth.
+ * Returns 0 if nothing was drawn, 2 if drawn, 3 if drawn with a column in the aim window (13..19). */
+static byte drawScaled(const byte *shape,byte hw2){
+ /* One division a thing: inv = 65535/tz (tz >= 18, so inv <= 3640). Height hw*512/tz = inv*(2*hw)/256, floor
+  * line 79 + 2560/tz = 79 + inv*10/256. */
+ word inv=65535u/(word)tz,a;byte h=(byte)((inv*hw2)>>8),wpx=h-(h>>3),top;int left;
+ yy=(byte)(88+((inv*10)>>8))-h;top=yy<8?0:yy-8;dH=h;
+ /* Centre pixel 128 + 160*th/tz: 128*|th|/tz = (|th|/2)*inv/256 (|th| <= 1.25 tz keeps the product in a word),
+  * plus a quarter of it. The frame covers every byte column its true span [left, left+wpx) touches, so a column
+  * holds sprite exactly where the thing is. */
+ a=((word)((th<0?-th:th)>>1)*inv)>>8;a+=a>>2;left=th<0?128-(int)a:128+(int)a;aimCol=(byte)(left>>3);left-=wpx>>1;
+ c0=(sb)(((left+256)>>3)-32);gW=(byte)(((left+wpx+255)>>3)-31-c0);
+ if((sb)gW<2)gW=2;if(gW>15)gW=15;
+ if(c0>31||c0+(sb)gW<=0)return 0;
+ dBase=back+(word)top*32;gSrc=shape;depthNow=tdepth;drawColumns();
+ return colHit;
+}
 static void actors(){
- byte i,n;int near=127;target=255;
+ byte i,n,k,kd;int near=127;
+ /* the player's offset from the cell centre, in 1/16 cells, turned into the view: tz and th are then the
+  * cell-centre values plus these (exactly: 16*zc+zoff >> 4 = zc + (zoff>>4)) */
+ tca=cosine[angle];tsa=cosine[(angle+24)&31];
+ tx=8-((byte)px>>4);ty=8-((byte)py>>4);zoff=0;hoff=0;project();zoff=tz>>4;hoff=th>>4;
+ target=255;
  for(n=0;n<nearCount;n++){
     i=nearby[n];aimColumn[i]=255;
-    Thing *o=things+i;int x,y,z,horiz,sx,depth;
-    if(!o->kind)continue;
-    x=(int)o->x-(px>>8);y=(int)o->y-(py>>8);
-    if(o->kind>=6 && x==0 && y==0){
-       if(o->kind==6)ammo=ammo>180?200:ammo+20;
-       if(o->kind==7)health=health>75?100:health+25;
-       if(o->kind==8){gun=1;ownedShotgun=1;shells=shells>46?50:shells+4;}
-       if(o->kind>=9&&o->kind<=11)keys|=1<<(o->kind-9);
-       if(o->kind==12)shells=shells>46?50:shells+4;
-       if(o->kind==13)armor=100;
-       if(o->kind==14 && health<200)health++;
-       if(o->kind==15 && armor<200)armor++;
+    Thing *o=things+i;
+    kd=o->kind;if(!kd)continue;
+    /* findNearby keeps every thing here within 18 cells on each axis */
+    tx=o->x-(byte)(px>>8);ty=o->y-(byte)(py>>8);
+    if(kd>=6 && !tx && !ty){
+       if(kd==6)ammo=ammo>180?200:ammo+20;
+       if(kd==7)health=health>75?100:health+25;
+       if(kd==8){gun=1;ownedShotgun=1;shells=shells>46?50:shells+4;}
+       if(kd>=9&&kd<=11)keys|=1<<(kd-9);
+       if(kd==12)shells=shells>46?50:shells+4;
+       if(kd==13)armor=100;
+       if(kd==14 && health<200)health++;
+       if(kd==15 && armor<200)armor++;
        o->kind=0;sound(SND_PICKUP);continue;
     }
-    if(x>18||x< -18||y>18||y< -18)continue;
-    z=x*cosine[angle]+y*cosine[(angle+24)&31];if(z<18)continue;
-    horiz=x*cosine[(angle+24)&31]-y*cosine[angle];if(horiz>z||horiz< -z)continue;
-    sx=16+horiz*20/z;if(sx<1||sx>30)continue;
-    depth=(z+3)>>3;if(depth>rayDistance[sx]+2)continue;
-    if(o->kind>=6){byte *p=back+(word)(82+heights[depth]/2)*32+sx;*p=60;p[32]=126;p[64]=60;dirtyCols[page][sx]=1;continue;}
-    sprite(o->kind==5?boss:wind[i]?impCast:o->kind>=3?imp:guard,sx-1,70+heights[depth]/3,2,24);
-    if(sx>=13&&sx<=19&&z<near*32){target=i;targetDepth=depth;near=(z+31)>>5;}
-    aimColumn[i]=sx;aimDepth[i]=depth;
-
+    /* Occlusion depth from the CELL CENTRE, which is where rayDistance is measured from (the view tables are per
+     * cell); projection from the player's true position, as the blended walls are. */
+    project();if(tz<18)continue;
+    if(th>tz+(tz>>2)||th< -tz-(tz>>2))continue;
+    /* pickups 2 map units tall, monsters 7 (the boss 8) */
+    if(kd>=6){drawScaled(pickupFrame,2*2);continue;}
+    k=drawScaled(kd==5?boss:wind[i]?impCast:kd>=3?imp:guard,kd==5?8*2:7*2);
+    if(!k)continue;
+    if(k==3&&tz<near*32){target=i;targetDepth=tdepth;near=(tz+31)>>5;}
+    aimColumn[i]=aimCol;aimDepth[i]=tdepth;
  }
 }
 static byte oldHP[2],oldAmmo[2],oldKeys[2],oldLevel[2],valid[2];
@@ -312,8 +643,8 @@ static void draw(){
  if(!valid[i]||keys!=oldKeys[i]){keysHud(19,177,keys);oldKeys[i]=keys;}
  if(!valid[i]||level!=oldLevel[i]){number(25,177,level+1);oldLevel[i]=level;}
  valid[i]=1;
- if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
- if(won){text(5,76,"LEVEL CLEAR. ENTER");for(i=0;i<32;i++)dirtyCols[page][i]=1;}
+ if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols(page)[i]=1;}
+ if(won){text(5,76,"LEVEL CLEAR. ENTER");for(i=0;i<32;i++)dirtyCols(page)[i]=1;}
  /* ONE-PICTURE BORDER FLASH when a hit lands: the VDG's colour set is inverted for the frame the hit is drawn in
   * (CSS, $FF22 bit 3, which the engine leaves set to 1), then put back on the next draw. No memory moves, so it
   * costs the player nothing; hurtFlash is set by hurt() and counted down once a frame. */
@@ -356,7 +687,7 @@ static void readLevel(){
  for(j=0;j<4;j++)balls[j].life=0;
  while(!loadAssets())waitForDisk();
  while(!diskRead(PACK_SECTOR,PACK_SECTORS,PACK)||PACK[0]!=72||PACK[1]!=71||PACK[2]!=82||PACK[3]!=50)waitForDisk();
- startLevel();
+ startLevel();*scaledTable=0;cacheTop=CACHE;
  while(!loadArea(areaAt(px>>8,py>>8)))waitForDisk();
  clockStart();
  }
