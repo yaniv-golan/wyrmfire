@@ -15,7 +15,7 @@ typedef struct {byte x,y,kind,hp;} Thing;
 static Thing things[MAX_OBJECTS];
 static byte shells,ownedShotgun,armor,targetDepth;
 static byte count,level,angle,health,ammo,gun,keys,kills,won,flashTime,cooldown,hurtFlash;
-static byte turn,rayDistance[32],col;
+static byte turn,rayDistance[32];
 static word px,py; /* high byte = map cell, low byte = fraction */
 static byte *back;
 static const byte *source;
@@ -73,7 +73,6 @@ static void startLevel(){
  px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
  movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
-static byte shading;
 static byte page;
 static byte *blitDest;
 static byte blitRows,blitWidth;
@@ -125,7 +124,7 @@ static const byte *audioPos,*audioEnd;
 static void sound(byte i){audioPos=ASSET(i);audioEnd=audioPos+ASSET_LEN(i);}
 /* At most four DAC samples per call. Renderer work and input continue while
  * the effect is active. No call holds the CPU for the length of a gunshot. */
-static asm void audioSlice(){
+asm void audioSlice(){
  asm {
     ldx _audioPos
     beq @done

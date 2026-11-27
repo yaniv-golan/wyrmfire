@@ -1,41 +1,95 @@
-static byte *columnOut;
-static byte runSize,runInk;
-static asm void putRun(){
+/* The wall columns' drawing primitives, in assembly. A column is 160 rows, 32 bytes apart.
+ * rowAt: X = back + 32*A + col (row A of the current column); uses D. */
+static byte col;
+asm void rowAt(){
  asm {
-   ldx _columnOut
-   lda _runInk
-   ldb _runSize
-   pshs b
-   lsrb
-   lsrb
-   lsrb
-   beq @tail
-@eight sta ,x
-   sta 32,x
-   sta 64,x
-   sta 96,x
-   sta 128,x
-   sta 160,x
-   sta 192,x
-   sta 224,x
-   leax 256,x
-   decb
-   bne @eight
-@tail puls b
-   andb #7
-   beq @end
-@one sta ,x
-   leax 32,x
-   decb
-   bne @one
-@end stx _columnOut
-   rts
+    ldb #32
+    mul
+    addd _back
+    addb _col
+    adca #0
+    tfr d,x
+    rts
  }
 }
-static void band(byte top,byte bottom,byte bits){
- if(bottom<=top)return;
- columnOut=back+((word)top<<5)+col;
- *columnOut=255;if(bits){columnOut+=32;runSize=bottom-top-1;runInk=bits;putRun();}else{columnOut=back+((word)bottom<<5)+col;}*columnOut=255;
+/* fillRows: store A in B rows from X down the column (B may be 0); X ends on the row after the last. */
+asm void fillRows(){
+ asm {
+    pshs b
+    lsrb
+    lsrb
+    lsrb
+    beq @tail
+@eight sta ,x
+    sta 32,x
+    sta 64,x
+    sta 96,x
+    leax 128,x
+    sta ,x
+    sta 32,x
+    sta 64,x
+    sta 96,x
+    leax 128,x
+    decb
+    bne @eight
+@tail puls b
+    andb #7
+    beq @end
+@one sta ,x
+    leax 32,x
+    decb
+    bne @one
+@end rts
+ }
+}
+/* A band: $FF on rows A (top) and B (bottom), bandInk on the rows between when it is not 0. Nothing if B<=A. */
+static byte bandInk;
+asm void band(){
+ asm {
+    pshs b,a
+    cmpb ,s
+    bls @out
+    jsr _rowAt
+    lda #255
+    sta ,x
+    ldb 1,s
+    subb ,s
+    lda _bandInk
+    beq @hollow
+    leax 32,x
+    decb
+    jsr _fillRows
+    bra @last
+@hollow lda #32
+    mul
+    leax d,x
+@last lda #255
+    sta ,x
+@out puls a,b,pc
+ }
+}
+/* Take a band off: rows A..B to 0 when bandInk is not 0, else only the two edge rows. Nothing if B<=A. */
+asm void eraseBand(){
+ asm {
+    pshs b,a
+    cmpb ,s
+    bls @out
+    jsr _rowAt
+    ldb 1,s
+    subb ,s
+    tst _bandInk
+    beq @two
+    incb
+    clra
+    jsr _fillRows
+    bra @out
+@two clr ,x
+    lda #32
+    mul
+    leax d,x
+    clr ,x
+@out puls a,b,pc
+ }
 }
 #define AREA ((byte*)0x7a00)
 #define AREA_END ((byte*)0xac00)
@@ -85,19 +139,61 @@ static byte loadArea(byte zone){
 #define SIGNATURES ((byte*)0x208)
 static void clearSignatures(){word i;for(i=0;i<502;i++)SIGNATURES[i]=0;}
 static const byte *view,*adjacent;
-static byte blendWeight;
-static byte angularIndex,sampled[4];
-static asm void samples(){
+static byte blendWeight,shading;
+static byte start,newSig[6],newDist,lift;static byte *dirtyPtr;
+asm void clearColumn(){
  asm {
-    pshs y
-    ldx _view
-    ldb _angularIndex
-    leax b,x
-    ldy _adjacent
+    clra
+    ldb #20
+@loop
+    sta 0,x
+    sta 32,x
+    sta 64,x
+    sta 96,x
+    leax 128,x
+    sta 0,x
+    sta 32,x
+    sta 64,x
+    sta 96,x
+    leax 128,x
+    decb
+    bne @loop
+    rts
+ }
+}
+/* The 32 wall columns of the picture. For each: four DAC samples (audioSlice), the view table's entry for the
+ * column's ray (blended with the adjacent cell's when there is one: value + (other-value)*blendWeight/256,
+ * rounded), the door lift, then the six-byte signature {top, bottom, portal top, portal bottom, ink, portal ink}.
+ * A column whose signature is the one on this page and that no sprite touched is left alone. Y = the page's
+ * signature for the column, U = the view entry. */
+asm void columns(){
+ asm {
+    pshs u,y
+    ldy #$0208
+    ldx #$f8c0
+    tst _page
+    beq @p0
+    leay 192,y
+    leax 32,x
+@p0 stx _dirtyPtr
+    clr _col
+@col jsr _audioSlice
+    ldb _col
+    ldx #_rayOffset
+    lda b,x
+    adda _start
+    bpl @k1
+    adda #96
+@k1 cmpa #96
+    blo @k2
+    suba #96
+@k2 ldu _view
+    leau a,u
+    ldx _adjacent
     lbeq @copy
-    leay b,y
-    lda 0,y
-    suba 0,x
+    leax a,x
+    lda ,x
+    suba ,u
     bcc @pos0
     nega
     ldb _blendWeight
@@ -108,10 +204,10 @@ static asm void samples(){
 @pos0 ldb _blendWeight
     mul
     addd #128
-@save0 adda 0,x
-    sta _sampled+0
-    lda 96,y
-    suba 96,x
+@save0 adda ,u
+    sta _newSig
+    lda 96,x
+    suba 96,u
     bcc @pos1
     nega
     ldb _blendWeight
@@ -122,10 +218,10 @@ static asm void samples(){
 @pos1 ldb _blendWeight
     mul
     addd #128
-@save1 adda 96,x
-    sta _sampled+1
-    lda 192,y
-    suba 192,x
+@save1 adda 96,u
+    sta _newSig+1
+    lda 192,x
+    suba 192,u
     bcc @pos2
     nega
     ldb _blendWeight
@@ -136,10 +232,10 @@ static asm void samples(){
 @pos2 ldb _blendWeight
     mul
     addd #128
-@save2 adda 192,x
-    sta _sampled+2
-    lda 288,y
-    suba 288,x
+@save2 adda 192,u
+    sta _newSig+2
+    lda 288,x
+    suba 288,u
     bcc @pos3
     nega
     ldb _blendWeight
@@ -150,51 +246,130 @@ static asm void samples(){
 @pos3 ldb _blendWeight
     mul
     addd #128
-@save3 adda 288,x
-    sta _sampled+3
-    puls y,pc
-@copy
-    lda 0,x
-    sta _sampled+0
-    lda 96,x
-    sta _sampled+1
-    lda 192,x
-    sta _sampled+2
-    lda 288,x
-    sta _sampled+3
-    puls y,pc
+@save3 adda 288,u
+    sta _newSig+3
+    bra @have
+@copy lda ,u
+    ldb 96,u
+    std _newSig
+    lda 192,u
+    ldb 288,u
+    std _newSig+2
+@have lda 384,u
+    sta _newDist
+    ldb 576,u
+    beq @none
+    cmpb #1
+    beq @plain
+    ldx #$0387
+    lda b,x
+    cmpa #8
+    blo @lift
+    clr _newSig+2
+    clr _newSig+3
+    bra @door
+@lift sta _lift
+    ldb _newSig+3
+    subb _newSig+2
+    mul
+    lsra
+    rorb
+    lsra
+    rorb
+    lsra
+    rorb
+    negb
+    addb _newSig+3
+    stb _newSig+3
+    lda _lift
+    cmpa #6
+    bhs @door
+    lda 480,u
+    sta _newDist
+@door lda #$99
+    bra @edge
+@none clr _newSig+2
+    clr _newSig+3
+@plain lda 672,u
+    anda #4
+    beq @edge
+    lda #$80
+@edge sta _newSig+5
+    lda 672,u
+    bita #2
+    beq @i1
+    lda #$80
+    bra @ink
+@i1 anda #1
+    beq @i2
+    lda #$ff
+    bra @ink
+@i2 tst _shading
+    beq @ink
+    lda #$11
+@ink sta _newSig+4
+    ldb _col
+    ldx #_rayDistance
+    lda _newDist
+    sta b,x
+    ldx _dirtyPtr
+    abx
+    tst ,x
+    bne @clear
+    ldd _newSig
+    cmpd ,y
+    bne @changed
+    ldd _newSig+2
+    cmpd 2,y
+    bne @changed
+    ldd _newSig+4
+    cmpd 4,y
+    beq @next
+@changed lda 4,y
+    ora 5,y
+    beq @erase
+    lda 1,y
+    suba ,y
+    cmpa #56
+    bls @erase
+@clear clr ,x
+    ldd _back
+    addb _col
+    adca #0
+    tfr d,x
+    jsr _clearColumn
+    bra @draw
+@erase lda 4,y
+    sta _bandInk
+    ldd ,y
+    jsr _eraseBand
+    lda 5,y
+    sta _bandInk
+    ldd 2,y
+    jsr _eraseBand
+@draw ldd _newSig+4
+    std 4,y
+    sta _bandInk
+    ldd _newSig
+    std ,y
+    jsr _band
+    lda 5,y
+    sta _bandInk
+    ldd _newSig+2
+    std 2,y
+    jsr _band
+@next leay 6,y
+    inc _col
+    lda _col
+    cmpa #32
+    lbne @col
+    puls y,u,pc
  }
-}
-static asm void clearColumn(){
- asm {
-    ldx _columnOut
-    clra
-    ldb #20
-loop
-    sta 0,x
-    sta 32,x
-    sta 64,x
-    sta 96,x
-    sta 128,x
-    sta 160,x
-    sta 192,x
-    sta 224,x
-    leax 256,x
-    decb
-    bne loop
-    rts
- }
-}
-static void eraseBand(byte top,byte bottom,byte ink){
- if(bottom<=top)return;
- columnOut=back+((word)top<<5)+col;
- if(ink){runSize=bottom-top+1;runInk=0;putRun();}
- else{*columnOut=0;back[((word)bottom<<5)+col]=0;}
 }
 static void scene(){
- byte x=px>>8,y=py>>8,otherX=x,otherY=y,start=angle*3;
- byte a,b,c,d,ink,edge,j;byte *sig,*dirty;const byte *vp;
+ byte x=px>>8,y=py>>8,otherX=x,otherY=y;
  int dx=(int)(byte)px-128,dy=(int)(byte)py-128;
+ start=angle*3;
  page=back==(byte*)0xe000;
  if(!loadArea(areaAt(x,y)))return;
  view=viewAt(x,y);if(!view)return;
@@ -202,22 +377,5 @@ static void scene(){
  else{otherY+=dy<0?-1:1;blendWeight=dy<0?-dy:dy;}
  adjacent=0;
  if(blendWeight>8&&areaAt(otherX,otherY)==currentArea&&cross(x,y,otherX,otherY))adjacent=viewAt(otherX,otherY);
-
- sig=page?SIGNATURES+192:SIGNATURES;dirty=dirtyCols(page);
- for(col=0;col<32;col++,sig+=6,dirty++){
-    int k=(int)start+rayOffset[col];audioSlice();
-    if(k<0)k+=96;else if(k>=96)k-=96;j=(byte)k;
-    angularIndex=j;vp=view+j;samples();a=sampled[0];b=sampled[1];c=sampled[2];d=sampled[3];
-    rayDistance[col]=vp[384];ink=vp[672];
-    edge=vp[576];
-    if(edge>1){byte lift=phase[edge-1];if(lift>=8){c=d=0;}else{d-=((word)(d-c)*lift)>>3;if(lift<6)rayDistance[col]=vp[480];}}
-    if(!edge)c=d=0;
-    edge=edge>1?0x99:((ink&4)?0x80:0x00);
-    ink=(ink&2)?0x80:((ink&1)?0xff:(shading?0x11:0));
-    if(!*dirty&&sig[0]==a&&sig[1]==b&&sig[2]==c&&sig[3]==d&&sig[4]==ink&&sig[5]==edge)continue;
-    if(*dirty||((sig[4]||sig[5])&&(sig[1]-sig[0]>56))){columnOut=back+col;clearColumn();}
-    else{eraseBand(sig[0],sig[1],sig[4]);eraseBand(sig[2],sig[3],sig[5]);}
-    sig[0]=a;sig[1]=b;sig[2]=c;sig[3]=d;sig[4]=ink;sig[5]=edge;
-    band(a,b,ink);band(c,d,edge);*dirty=0;
- }
+ columns();
 }
