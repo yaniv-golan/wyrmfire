@@ -7,7 +7,7 @@ permissions:
   contents: read
 env:
   # yaniv-golan/CLOADM, a dev-only test dependency (never committed here).
-  CLOADM_COMMIT: c592fe266482d63f9df32afeea7872b32f58f38d
+  CLOADM_COMMIT: e96a115ff14cf4e566d29ed30ff2768c15366216
   RELEASE_MAP: E1M1
 jobs:
   engine:
@@ -149,7 +149,7 @@ jobs:
           cp level/level.vdk build/wyrmfire.vdk
           CLOADM=$PWD/cloadm WYRMFIRE_BUILD=$PWD/build WYRMFIRE_SHOTS=$PWD/shots node --test test/smoke.test.mjs
       - name: Disk-region stall probe
-        run: node test/harness/regions.cjs cloadm build shots/regions.json --max-unpack-fields 2087 --max-read-fields 2902
+        run: node test/harness/regions.cjs cloadm build shots/regions.json --max-unpack-fields 2087 --max-net-read-fields 1992.3 --max-wait-fields 13 --max-read-fields 2902
       - name: Swap harness
         run: node test/harness/swap.cjs cloadm build
       - name: Encounter harness

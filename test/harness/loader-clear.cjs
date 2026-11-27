@@ -24,7 +24,7 @@ const launchAddress = (buildDir) => {
   const { formats } = await import(path.resolve(repo, 'js/media/formats.js'));
   const s = await boot(repo, files);
   const Emu = s.Emu, LAUNCH = launchAddress(dir);
-  const t = new Emu.Session({ welcomeMenu: false });
+  const t = boot.session(Emu, { welcomeMenu: false });
   t.switchMachine('dragon64', { ram: 64 }, { menu: false });
   const fdc = new Emu.devices.dragonfdc(); t.machine.insertCartridge(fdc);
   fdc.mount(0, { bytes: new Uint8Array(fs.readFileSync(files.vdk)), format: 'vdk', name: 'WYRMFIRE.VDK', writeProtected: true });

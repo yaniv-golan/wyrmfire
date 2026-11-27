@@ -11,9 +11,20 @@ const ROOT = path.resolve(__dirname, '../..');
 
 function emu(repo) { return require(path.resolve(repo, 'js/emu.js')); }
 
+// CLOADM 0.4.1's Session names the machine on the screen `shownMachine` and takes it as a required argument of
+// pokeBytes(addr, bytes, machine). The harnesses were written against `s.machine` and a two-argument pokeBytes;
+// session() gives a Session both, so each harness reads the same on either API.
+function session(Emu, options) {
+  const s = new Emu.Session(options);
+  if (!('machine' in s)) Object.defineProperty(s, 'machine', { get() { return s.shownMachine; } });
+  const poke = s.pokeBytes.bind(s);
+  s.pokeBytes = (addr, bytes, m) => poke(addr, bytes, m || s.machine);
+  return s;
+}
+
 async function boot(repo, { bin, vdk }) {
   const Emu = emu(repo);
-  const s = new Emu.Session({ welcomeMenu: false });
+  const s = session(Emu, { welcomeMenu: false });
   s.switchMachine('dragon64', { ram: 64 }, { menu: false });
   const fdc = new Emu.devices.dragonfdc();
   s.machine.insertCartridge(fdc);
@@ -48,4 +59,4 @@ function png(repo, s) { return require(path.resolve(repo, 'cli/cloadm.js')).fram
 // Engine RAM map (src/disk.h): GRID and the HGR2 header location on the disk.
 const GRID = 0xac00, PACK = 0x6e00, HEADER_SECTOR = 30;
 
-module.exports = Object.assign(boot, { boot, emu, symbols, layout, png, GRID, PACK, HEADER_SECTOR });
+module.exports = Object.assign(boot, { boot, emu, session, symbols, layout, png, GRID, PACK, HEADER_SECTOR });

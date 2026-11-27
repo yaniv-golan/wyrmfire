@@ -33,6 +33,8 @@ static word length;static byte *unpackTarget;
 #define aimColumn ((byte*)0xf900)
 #define aimDepth ((byte*)0xf940)
 static byte movingDoor,rise;
+/* Keep adjacent, in this order: columns() compares and stores {blendWeight, shading} and {start, epoch} a pair at a
+ * time (ldd/std). */
 static byte blendWeight,shading,start,epoch;
 static byte maxRay;
 static void animateDoor(){byte i;if(!movingDoor)return;epoch++;rise=++phase[movingDoor];if(rise==7)for(i=0;i<PACK[10];i++)if(doorGroups[i]==movingDoor)GRID[doorCells[i]]&=15;if(rise>=8)movingDoor=0;}
@@ -84,7 +86,7 @@ static byte page;
  * written by nothing else (measured, as the ranges above); zeroed by clearSignatures(). */
 #define DIRT ((byte*)0xfe00)
 static byte *dirtBase;          /* &dirt[64+page*32]: the first row is at -64, the weapon at +64 */
-static byte mTop,mEnd;
+static byte mTop,mEnd;   /* keep adjacent, in this order: overText() and ball() set both with one std */
 static byte newSig[6];
 static byte *blitDest;
 static byte blitRows,blitWidth;
@@ -374,6 +376,7 @@ asm void blitColumn(){
 }
 /* Scale one 16x24 mask/ink frame across to gW bytes, row-major as the assets are (2*gW bytes a row), nearest
  * pixel. oM and oK are adjacent (one std stores both). */
+/* oM, oK: keep adjacent, in this order (genFrame loads both with one ldd). */
 static const byte *gSrc;static byte *gDst;static byte gW,gStride,gN,gRows,gCols,gBits,oM,oK;static word gM,gK;
 asm void genFrame(){
  asm {

@@ -28,12 +28,15 @@ Directory copies on tracks 16 and 20 (logical sectors 576-593 and 720-737).
 | `$6E00-$79FF` | PACK: HGR2 header (3,072 bytes) |
 | `$7A00-$ABFF` | AREA: unpacked region; the compressed region is read to the top of this window and unpacked in place |
 | `$AC00-$DFFF` | GRID: up to 104 rows of 128 cells (13,312 bytes) |
-| `$F800-$F97F` | engine arrays outside the image: `wind`, `waitForAttack`, `nearby`, `dirtyCols` (2 x 32), `aimColumn`, `aimDepth` (64 bytes each) |
+| `$F800-$F8BF`, `$F900-$F97F` | engine arrays outside the image: `wind`, `waitForAttack`, `nearby`; `aimColumn`, `aimDepth` (64 bytes each) |
+| `$F8C0-$F8FF` | unused (once the per-column dirty flags) |
 | `$F980-$F9DF` | scaled-frame cache entries ({source, data, width}, ended by a zero source) |
 | `$F9E0-$FCFF` | scaled-frame cache: monster and pickup frames scaled across to 3-15 bytes, 24 rows |
-| `$FD00-$FDFF` | stack (from `$FE00` down; lowest seen over a whole level: `$FD9B`) |
+| `$FD00-$FDFF` | stack (from `$FE00` down; lowest seen: `$FD91`) |
+| `$FE00-$FEBF` | `DIRT`: per page and column, the first row a sprite or a text drew over, the row after the last, and the weapon frame standing on the column (3 x 2 x 32 bytes) |
+| `$FEC0-$FEFF` | free |
 
-The ranges outside the image are not loaded; `main()` zeroes `$0208-$03FD`, and `readLevel()` sets what the
+The ranges outside the image are not loaded; `main()` zeroes `$0208-$03FD` and `$FE00-$FEBF`, and `readLevel()` sets what the
 engine reads from `$F800` up before the first picture. `test/harness/boot.cjs` reads their addresses from the
 `#define`s in `src/`, so the harnesses can name them like the symbols in the link map.
 

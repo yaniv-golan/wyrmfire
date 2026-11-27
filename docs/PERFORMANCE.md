@@ -188,8 +188,8 @@ thing in view on main, 5.5 to 12.4 on this branch before the change). The owner 
 speed. The pace is now the field interrupt: each field it counts (`fieldTick`, `clock.h`) grants 29 samples of
 credit, 28 on every fourth -- **28.75 a field**, which is what 128 a picture came to on main's spawn view (79,082
 cycles, 4.45 fields) -- and a call sends its four samples only when four are in credit. One field is taken up a
-call; the credit stops at 116 (four fields), so an effect catches up after a slow picture and never runs far
-ahead; an effect starts with its first four samples in hand. While IRQ is held (a disk transfer, a cue)
+call; no field is credited once 116 samples (four fields) are in hand, so the credit never passes 144 (115 + 29):
+an effect catches up after a slow picture and never runs far ahead; an effect starts with its first four samples in hand. While IRQ is held (a disk transfer, a cue)
 `fieldTick` stands still and so does the effect, as before.
 
 `test/harness/sound.cjs` starts each of the five effects the way the game does, at the spawn with the level's
@@ -214,8 +214,9 @@ by the pictures drawn, not by the field clock".
 about 30 cycles more than it did and a call without credit about 25; the samples themselves cost what they
 always did, and there are fewer of them a picture. 61 bytes of code and data (`program_end` $4FAC -> $4FE9). The pictures
 and the game state are the same (the identity log does not hash the sound position and its SHA-256 is unchanged);
-what a player hears also differs in grain: the four-sample bursts now come at the start of each field instead of
-evenly through a picture.
+what a player hears also differs in grain: the samples are still sent only inside the column loop, once a
+picture, so the credit a picture earned (about 57 samples at two fields a picture) goes out as some 14
+four-sample bursts on consecutive columns, where every one of the 32 columns used to send.
 
 ## Measured exceptions
 

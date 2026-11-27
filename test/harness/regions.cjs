@@ -12,13 +12,19 @@
 // rotation, so a build that reaches the load at another moment can gain or lose a revolution, 10 fields, on a
 // region), and unpackFields, the checksum and the LZ unpack (CPU only: the same on every build that does not
 // change them).
-//   node regions.cjs CLOADM_DIR BUILD_DIR [out.json] [--max-unpack-fields N] [--max-read-fields N]
-// The limits fail the run when the regions' unpackFields, or their readFields, add up to more than N. CI passes
-// main's sums (2f47134: 2,076.5 and 2,763.4 for Freedoom E1M1) plus 0.5% for the unpack, which no change to the
-// renderer moves, and plus 5% for the read, which is what rotational phase can move (docs/PERFORMANCE.md).
+// The read is split once more at the first data byte (the first read of $FF43): waitFields before it, the seek
+// and the wait for the first sector to come round, which is where rotational phase lands; netReadFields after it,
+// the transfer and everything between its parts, which is the same to a hundredth of a field on any build that
+// does not change the loader.
+//   node regions.cjs CLOADM_DIR BUILD_DIR [out.json] [--max-unpack-fields N] [--max-net-read-fields N]
+//                    [--max-wait-fields N] [--max-read-fields N]
+// The limits fail the run when the regions' unpackFields, netReadFields or readFields add up to more than N, or
+// one region's waitFields is more than N. CI passes main's sums (2f47134, Freedoom E1M1: unpack 2,076.5, net read
+// 1,990.3, read 2,763.4) plus 0.5%, 0.1% and 5%, and 13 fields for the wait: a revolution is 10 and main's
+// longest wait is 10.2 (docs/PERFORMANCE.md). The tight ones are the unpack and the net read.
 const fs=require('fs');
 const argv=process.argv.slice(2),limit=(flag)=>{const i=argv.indexOf(flag);return i>=0?Number(argv.splice(i,2)[1]):null;};
-const maxRead=limit('--max-read-fields'),maxUnpack=limit('--max-unpack-fields');
+const maxRead=limit('--max-read-fields'),maxUnpack=limit('--max-unpack-fields'),maxNet=limit('--max-net-read-fields'),maxWait=limit('--max-wait-fields');
 const [repo,dir,out]=argv;
 (async()=>{
 const boot=require('./boot.cjs'),files=boot.layout(dir),sym=boot.symbols(files.map);
@@ -30,25 +36,30 @@ const size=w(PACK+4),zone=PACK+w(PACK+16),sectors=PACK+w(PACK+20),raw=PACK+w(PAC
 const first=new Map();
 for(let i=0;i<size;i++){const c=r(boot.GRID+i);if(!(c&15)||(c&16))continue;const z=r(zone+((i>>9)<<5)+((i&127)>>2));if(z&&!first.has(z))first.set(z,i);}
 const rows=[];
+// the first data byte of a load: the first read of the WD2797's data register ($FF43) after diskRead() is entered
+let armed=false,byte1=-1;const busRead=s.machine.read.bind(s.machine);
+s.machine.read=(a)=>{if(armed&&a===0xff43){byte1=s.machine.cycle;armed=false;}return busRead(a);};
 for(const [z,cell] of [...first.entries()].sort((a,b)=>a[0]-b[0])){
   s.pokeBytes(sym.px,[cell&127,128]);s.pokeBytes(sym.py,[cell>>7,128]);
   // The region loads in the first or the second picture after the move,
   // depending on where the main loop was; count both against a resident one.
-  let from=-1,read=-1,to=-1;const m=s.machine,F=Math.round(m.tickHz/50);
-  m.pcWatch=(pc)=>{if(from<0){if(pc===sym.diskRead)from=m.cycle;}else if(to<0){if(read<0&&pc===sym.checksum)read=m.cycle;if(r(sym.currentArea)===z)to=m.cycle;}};
-  const p1=next(),p2=next(),resident=next();m.pcWatch=null;
+  let from=-1,read=-1,to=-1;const m=s.machine,F=Math.round(m.tickHz/50);byte1=-1;
+  m.pcWatch=(pc)=>{if(from<0){if(pc===sym.diskRead){from=m.cycle;armed=true;}}else if(to<0){if(read<0&&pc===sym.checksum)read=m.cycle;if(r(sym.currentArea)===z)to=m.cycle;}};
+  const p1=next(),p2=next(),resident=next();m.pcWatch=null;armed=false;
   if(to<0)throw Error('region '+z+' was not loaded');
-  rows.push({region:z,cell,sectors:r(sectors+z-1),rawBytes:w(raw+2*(z-1)),loadFields:+((to-from)/F).toFixed(1),readFields:+((read-from)/F).toFixed(1),unpackFields:+((to-read)/F).toFixed(1),pictureFields:p1+p2,residentFields:resident,area:r(sym.currentArea)});
+  rows.push({region:z,cell,sectors:r(sectors+z-1),rawBytes:w(raw+2*(z-1)),loadFields:+((to-from)/F).toFixed(1),readFields:+((read-from)/F).toFixed(1),waitFields:+((byte1-from)/F).toFixed(2),netReadFields:+((read-byte1)/F).toFixed(2),unpackFields:+((to-read)/F).toFixed(1),pictureFields:p1+p2,residentFields:resident,area:r(sym.currentArea)});
 }
 const ld=rows.map(x=>x.loadFields).sort((a,b)=>a-b),sum=+rows.reduce((t,x)=>t+x.loadFields,0).toFixed(1);
 const part=k=>+rows.reduce((t,x)=>t+x[k],0).toFixed(1);
-const summary={regions,probed:rows.length,loadFieldsSum:sum,readFieldsSum:part('readFields'),unpackFieldsSum:part('unpackFields'),loadFieldsMin:ld[0],loadFieldsMedian:ld[ld.length>>1],loadFieldsMax:ld.at(-1),pictureFieldsSum:rows.reduce((t,x)=>t+x.pictureFields,0)};
+const summary={regions,probed:rows.length,loadFieldsSum:sum,readFieldsSum:part('readFields'),netReadFieldsSum:part('netReadFields'),waitFieldsMax:Math.max(...rows.map(x=>x.waitFields)),unpackFieldsSum:part('unpackFields'),loadFieldsMin:ld[0],loadFieldsMedian:ld[ld.length>>1],loadFieldsMax:ld.at(-1),pictureFieldsSum:rows.reduce((t,x)=>t+x.pictureFields,0)};
 // Least-squares fit loadFields = a + b*sectors, used to project other maps.
 const n=rows.length,sx=rows.reduce((t,x)=>t+x.sectors,0),sy=sum,sxx=rows.reduce((t,x)=>t+x.sectors*x.sectors,0),sxy=rows.reduce((t,x)=>t+x.sectors*x.loadFields,0);
 const b=(n*sxy-sx*sy)/(n*sxx-sx*sx||1),a=(sy-b*sx)/n;summary.fit={fieldsPerSector:+b.toFixed(3),baseFields:+a.toFixed(2)};
 console.log(JSON.stringify(summary));
 if(out)fs.writeFileSync(out,JSON.stringify({summary,rows},null,1)+'\n');
 if(rows.some(x=>x.area!==x.region))throw Error('engine did not switch to the probed region');
+if(maxNet!==null&&summary.netReadFieldsSum>maxNet)throw Error('from the first byte to the last, reading the '+rows.length+' regions took '+summary.netReadFieldsSum+' fields in all, more than the '+maxNet+' allowed: the load path got slower');
 if(maxUnpack!==null&&summary.unpackFieldsSum>maxUnpack)throw Error('checking and unpacking the '+rows.length+' regions took '+summary.unpackFieldsSum+' fields in all, more than the '+maxUnpack+' allowed: the load path got slower');
+if(maxWait!==null&&summary.waitFieldsMax>maxWait)throw Error('a region waited '+summary.waitFieldsMax+' fields for its first byte, more than the '+maxWait+' allowed: the load path got slower');
 if(maxRead!==null&&summary.readFieldsSum>maxRead)throw Error('reading the '+rows.length+' regions took '+summary.readFieldsSum+' fields in all, more than the '+maxRead+' allowed: the load path got slower');
 })().catch(e=>{console.error(e);process.exitCode=1;});

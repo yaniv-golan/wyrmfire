@@ -17,7 +17,8 @@ const fs = require('fs'), assert = require('assert/strict');
 const [repo, dir] = process.argv.slice(2), REPORT = process.argv.includes('--report');
 const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols(files.map);
 const RATE = 28.75, ASSETS = 0x5000;
-const EFFECTS = { fire: 14, blast: 15, door: 16, hurt: 17, pickup: 18 };
+const EFFECTS = { fire: 14, blast: 15, door: 16, hurt: 17, pickup: 18, 'fire, slow picture': 14 };
+const CAP = 116 - 1 + 29;   // no field is credited once 116 samples are in hand, so the credit never passes this
 (async () => {
   const rows = {};
   for (const [name, index] of Object.entries(EFFECTS)) {
@@ -31,10 +32,14 @@ const EFFECTS = { fire: 14, blast: 15, door: 16, hurt: 17, pickup: 18 };
     const w = cpu.write8.bind(cpu);
     cpu.write8 = (a, v) => { if ((a & 0xffff) === 0xff20 && pcNow >= sym.audioSlice && pcNow < end) dac.push([m.cycle, v & 0xff]); w(a, v); };
     const step = m.runCycles.bind(m);
-    m.pcWatch = (pc) => { pcNow = pc; };
+    let credit = 0;
+    m.pcWatch = sym.audioCredit === undefined ? (pc) => { pcNow = pc; } : (pc) => { pcNow = pc; const c = read(sym.audioCredit); if (c > credit) credit = c; };
     // the level's own things stay where they are (ten of them near the spawn): one more is added for the pickup and the hit
     const sx = read(boot.PACK + 7), sy = read(boot.PACK + 8), n = read(sym.count), extra = (...v) => { s.pokeBytes(sym.things + 4 * n, v); s.pokeBytes(sym.waitForAttack + n, [0]); s.pokeBytes(sym.wind + n, [0]); put('count', n + 1); };
     picture(); picture();
+    // a guard appears 1.5 cells ahead while the shot plays: its frame is scaled to a new width, a picture of about
+    // ten fields with no column loop in most of it, so the fields it spans are credited afterwards, up to the cap
+    if (name === 'fire, slow picture') { put('px', sx, 0); picture(); put('gun', 0); put('ammo', 50); m.setKey('SPACE', true); picture(); m.setKey('SPACE', false); extra(sx + 1, sy, 1, 4); s.pokeBytes(sym.waitForAttack + n, [255]); }
     if (name === 'fire') { put('gun', 0); put('ammo', 50); m.setKey('SPACE', true); picture(); m.setKey('SPACE', false); }
     if (name === 'blast') { put('gun', 1); put('ownedShotgun', 1); put('shells', 8); m.setKey('SPACE', true); picture(); m.setKey('SPACE', false); }
     if (name === 'pickup') { extra(sx, sy, 6, 4); picture(); }
@@ -57,15 +62,24 @@ const EFFECTS = { fire: 14, blast: 15, door: 16, hurt: 17, pickup: 18 };
     m.pcWatch = null;
     assert.ok(dac.length, `${name}: no sample reached the DAC`);
     const want = Array.from({ length: len }, (_, i) => read(at + i)), got = dac.map((d) => d[1]);
-    const fields = (dac[dac.length - 1][0] - dac[0][0]) / Math.round(m.tickHz / 50);
-    rows[name] = { samples: got.length - 1, length: len, fields: +fields.toFixed(1), expected: +(len / RATE).toFixed(1), samplesAField: +((got.length - 1) / fields).toFixed(2), same: got.length === len + 1 && got[len] === 128 && want.every((v, i) => v === got[i]) };
+    const F = Math.round(m.tickHz / 50), fields = (dac[dac.length - 1][0] - dac[0][0]) / F;
+    let gap = 0, busiest = 0; const perField = new Map();
+    dac.forEach((d, i) => { if (i) gap = Math.max(gap, (d[0] - dac[i - 1][0]) / F); const f = Math.floor(d[0] / F), c = (perField.get(f) || 0) + 1; perField.set(f, c); busiest = Math.max(busiest, c); });
+    rows[name] = { samples: got.length - 1, length: len, fields: +fields.toFixed(1), expected: +(len / RATE).toFixed(1), samplesAField: +((got.length - 1) / fields).toFixed(2), longestGap: +gap.toFixed(1), mostInAField: busiest, mostCredit: credit, same: got.length === len + 1 && got[len] === 128 && want.every((v, i) => v === got[i]) };
   }
   console.log(JSON.stringify(rows, null, 1));
   if (REPORT) return;
   for (const [name, r] of Object.entries(rows)) {
     assert.ok(r.same, `${name}: the DAC did not get the asset's ${r.length} samples in order and then $80 (${r.samples} samples sent)`);
     // door: the view at the door is not the spawn view, and the door moves; allow it the same tolerance
-    assert.ok(Math.abs(r.fields - r.expected) <= Math.max(2, r.expected * 0.06), `${name}: ${r.length} samples took ${r.fields} fields, want ${r.expected} (${RATE} a field): the effect is paced by the pictures drawn, not by the field clock`);
+    // a gap of more than four fields loses what the cap does not credit, and no more than that
+    const late = Math.max(0, r.longestGap - 4);
+    assert.ok(r.mostCredit <= CAP, `${name}: the credit reached ${r.mostCredit} samples, more than the ${CAP} the four-field cap allows: after a slow picture the effect runs ahead`);
+    assert.ok(r.mostInAField <= CAP + 1, `${name}: ${r.mostInAField} samples in one field, more than the cap allows`);
+    if (name === 'fire, slow picture') assert.ok(r.longestGap > 4, `${name}: the longest gap was ${r.longestGap} fields: the picture was not slow enough to reach the cap`);
+    // (the slow case also draws the close guard on both pages for the first time: 5 fields of slack, not 2; what it
+    // must not do is end early)
+    assert.ok(r.fields >= r.expected - 2 && r.fields <= r.expected + late + (late ? 5 : 2), `${name}: ${r.length} samples took ${r.fields} fields, want ${r.expected} (${RATE} a field): the effect is paced by the pictures drawn, not by the field clock`);
   }
   console.log('Sound PASS');
 })().catch((e) => { console.error(e); process.exitCode = 1; });

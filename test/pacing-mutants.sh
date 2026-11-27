@@ -6,8 +6,12 @@
 # that no longer matches the source is an error.
 #   per-picture -- audioSlice() sends its four samples on every call, credit or not: the effects are paced by the
 #                  pictures drawn again (128 samples a picture) and play as fast as the renderer runs.
+#   no-cap      -- audioSlice() credits every field it missed, however many: after a picture of ten fields the
+#                  credit passes the 144 samples the cap allows and the effect runs ahead.
 #   slow-load   -- loadArea() idles for an empty 600-pass loop before it unpacks a region: the unpack total of the
 #                  regions probe rises past its limit.
+#   slowread20  -- diskRead() idles for an empty 20-pass loop after each part of a transfer: the net read (first
+#                  byte to checksum) rises past its limit, though the whole read stays inside its 5%.
 set -eu
 cloadm=$(CDPATH='' cd -- "$1" && pwd); vdk=$(CDPATH='' cd -- "$(dirname "$2")" && pwd)/$(basename "$2")
 root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
@@ -30,4 +34,6 @@ EOF
 }
 mutant per-picture native.c '    suba #4\n    bcs @done\n    sta _audioCredit\n' '' 'paced by the pictures drawn' sound.cjs
 mutant slow-load scene.h ' unpackTarget=AREA;length=' ' {word q;for(q=0;q<600;q++){}}unpackTarget=AREA;length=' 'the load path got slower' regions-limits.cjs
+mutant slowread20 floppy.h '    readTrackPart();if(diskError)' '    readTrackPart();{byte q;for(q=0;q<20;q++){}}if(diskError)' 'from the first byte to the last' regions-limits.cjs
+mutant no-cap native.c '    cmpa #116\n    bhs @have\n' '' 'the four-field cap allows' sound.cjs
 echo 'all pacing mutants killed'
