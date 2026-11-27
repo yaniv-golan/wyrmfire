@@ -12,7 +12,9 @@
 // state. The script walks and turns from the spawn with a seeded key sequence, fires all three weapons, opens
 // doors, jumps to cells all over the map (every region streams from the disk), and stands monsters and pickups at
 // every scale, at the screen edges, casting, in a crowd and behind walls; then it stands still, toggles the
-// hatching, alternates views, opens doors without moving, dies, starts again and clears the level.
+// hatching, alternates views, shoots a guard dead for its pickup, has a guard appear over the weapon and go, and
+// walk up to the player, all in a view that does not change; opens doors without moving, dies, starts again and
+// clears the level.
 const fs = require('fs');
 const [repo, dir, outFile] = process.argv.slice(2);
 const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols(files.map);
@@ -39,6 +41,28 @@ const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols
 
   for (let i = 0; i < 4; i++) picture();          // the intro cue, then the first pictures
   record('spawn');
+  const spawn = [read(boot.PACK + 7), read(boot.PACK + 8)], [sx, sy] = spawn;
+  const at = (x, y, fx, fy, angle) => { put('px', x, fx); put('py', y, fy); put('angle', angle); put('health', 100); };
+  const level = { count: read(sym.count), things: Array.from({ length: 256 }, (_, i) => read(sym.things + i)) };
+
+  // 0. First, so that a renderer that gets these wrong fails within a hundred pictures.
+  // A guard with 2 hit points three cells ahead, shot from a still view: it dies and leaves its pickup. Then a guard
+  // one cell ahead, over the weapon's rows, that is taken away, and one that is left to walk up to the player: the
+  // weapon's columns are repainted from what the sprite left on them, with the walls unchanged.
+  const one = (x, y, kind, hp, wait) => { put('count', 1); put('things', x, y, kind, hp); put('waitForAttack', wait); put('wind', 0); };
+  at(sx, sy, 128, 128, 0); put('gun', 0); put('ammo', 50); one(sx + 3, sy, 1, 2, 255); step('shot', 3);
+  hold(['SPACE']); for (let i = 0; i < 8; i++) { put('health', 100); step('shot'); } hold([]); step('shot', 3);
+  for (const gun of [0, 1, 2]) {
+    at(sx, sy, 128, 128, 0); put('gun', gun); one(sx + 1, sy, 1, 9, 255); step('near', 4);
+    one(120, 100, 1, 9, 255); step('near', 4);
+    one(sx + 1, sy, 5, 9, 255); step('near', 3); put('things', sx + 1, sy, 0, 0); step('near', 3);
+  }
+  at(sx, sy, 128, 128, 0); put('gun', 0); one(sx + 4, sy, 1, 9, 0);
+  for (let i = 0; i < 20; i++) { put('health', 100); step('walk'); }
+  // the level's own things back, as they were, for the play that follows
+  put('count', level.count); s.pokeBytes(sym.things, level.things); s.pokeBytes(sym.waitForAttack, Array(64).fill(0)); s.pokeBytes(sym.wind, Array(64).fill(0));
+  at(sx, sy, 128, 128, 0); put('gun', 0); put('ammo', 50); put('kills', 0); step('spawn', 2);
+
 
   // 1. Seeded play from the spawn: walk, turn, strafe, fire, use, change weapon, toggle the hatching.
   put('shells', 30); put('ownedShotgun', 1);
@@ -63,14 +87,12 @@ const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols
   hold([]);
 
   // 3. Monsters and pickups in the spawn corridor: every scale, both edges, casting, crowds, fireballs.
-  const spawn = [read(boot.PACK + 7), read(boot.PACK + 8)];
   const stand = (fx, fy, angle, things, wait, wind, n) => {
     put('px', spawn[0], fx); put('py', spawn[1], fy); put('angle', angle); put('health', 100); put('won', 0); put('gun', rnd(3));
     put('count', things.length); put('things', ...things.flatMap(([x, y, k]) => [x, y, k, 9]));
     put('waitForAttack', ...things.map(() => wait)); put('wind', ...things.map(() => wind));
     step('thing', n);
   };
-  const [sx, sy] = spawn;
   for (const kind of [1, 3, 5, 6, 9])
     for (const d of [1, 2, 3, 4, 5, 6, 8, 10, 12, 15])
       for (const fx of [0, 128, 255]) stand(fx, 128, 0, [[sx + d, sy, kind]], 255, 0, 2);
@@ -92,7 +114,6 @@ const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols
   //    views alternating every picture and every second picture; a door opening while the player stands still;
   //    dying and starting again; the exit, the level-clear screen and starting again.
   const G = (x, y) => read(boot.GRID + 128 * y + x);
-  const at = (x, y, fx, fy, angle) => { put('px', x, fx); put('py', y, fy); put('angle', angle); put('health', 100); };
   put('count', 2); put('things', sx + 3, sy, 1, 9, sx + 5, sy + 1, 3, 9); put('waitForAttack', 255, 255); put('wind', 0, 0);
   at(sx, sy, 128, 128, 0); step('still', 6);
   hold(['D']); step('still', 1); hold([]); step('still', 5); hold(['D']); step('still', 1); hold([]); step('still', 3);

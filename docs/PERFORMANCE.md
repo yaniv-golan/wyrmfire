@@ -67,12 +67,19 @@ is the new region, in two parts:
 * **unpack** -- the checksum and the LZ unpack, CPU only: 2,076.5 on main and on `0493c18`, 2,077.5 here (the
   field interrupt's one more instruction).
 
-**The rule:** unpack <= main + 0.5% (2,087) and read <= main + 5% (2,902), as limits `regions.cjs` takes and CI
-passes. The 5% is the room rotational phase needs; the unpack limit is what catches a slower loader. Mutant
-(`test/pacing-mutants.sh`, in CI): an empty 600-pass loop in `loadArea()` before the unpack fails with "checking
-and unpacking the 149 regions took 2229.6 fields in all, more than the 2087 allowed: the load path got slower".
-A delay before `diskRead()` is entered is outside the timed window and is the route harness's to see; a small one
-inside the read can hide in the 5%.
+The read is split once more at the first data byte (the first read of `$FF43`). Before it are the seek and the
+wait for the first sector to come round: 773.1 fields on main, 842.2 here, and that is where all of the +69 is
+(one region's longest wait: 10.2 fields on main, 11.7 here; a revolution is 10). After it, the **net read** -- the
+transfer and everything between its parts -- is **1,990.3 fields on main and 1,990.2 here**.
+
+**The rule:** unpack <= main + 0.5% (2,087), net read <= main + 0.1% (1,992.3), no region waits more than 13
+fields for its first byte, and the whole read <= main + 5% (2,902) as a sanity check; `regions.cjs` takes the
+limits and CI passes them. Mutants (`test/pacing-mutants.sh`, in CI): an empty 600-pass loop in `loadArea()`
+before the unpack -- "checking and unpacking the 149 regions took 2229.6 fields in all, more than the 2087
+allowed"; an empty 20-pass loop after each `readTrackPart()` -- "from the first byte to the last, reading the 149
+regions took 1996.6 fields in all, more than the 1992.3 allowed" (the whole read, 2,848.9, is inside its 5%: the
+first version of this rule passed that mutant). A delay before `diskRead()` is entered is outside the timed
+window and is the route harness's to see.
 
 ### Where the time went (cycles a picture, still spawn view, `tools/profile-cycles.mjs`, N=1000)
 
@@ -153,12 +160,18 @@ unchanged.
 
 * `test/harness/identity.cjs` plays a scripted run whose inputs change exactly at picture boundaries (the machine
   is stepped one instruction at a time to the `$0200` store) and records a hash of the page on the screen and of
-  the game state at every picture: 1,665 pictures -- seeded walking, turning, strafing and firing from the spawn,
+  the game state at every picture: 1,743 pictures -- a guard shot dead for its pickup, a guard and the boss over
+  the weapon's rows that are taken away, a guard walking up to the player, all in a view that does not change;
+  seeded walking, turning, strafing and firing from the spawn,
   90 cells all over the map, monsters and pickups at every scale, at both edges, casting, in crowds, fireballs,
   the still view, the hatching toggled, alternating views, three doors opened without moving, death, restart and
   the level clear. The game depends on pictures drawn and not on time, so two builds that draw the same thing
   give the same file whatever their speed. Every commit above gives the file `0493c18` gives; its SHA-256 is
-  pinned in `test/identity.sha256` and CI checks it.
+  pinned in `test/identity.sha256` and CI checks it. (The script has grown twice, from 1,521 pictures to 1,665 and
+  to 1,743; each time the log was derived again from `0493c18`'s own binary with the new script and the branch
+  compared against that, so the pin is always `0493c18`'s pictures: now `3b7a52af...`.) A mutant that leaves the
+  weapon's frame marked as standing after a sprite's rows below row 124 were repainted differs from picture 19
+  (29 pictures in all); the 1,665-picture script did not see it.
 * `test/harness/sprites.cjs`: the same measurements and the same 12 PNGs as `0493c18`, byte for byte. The harness
   itself changed in one way: it sampled `tdepth`, `c0` and `gW` at the next frame boundary, up to a field into the
   next picture, where `actors()` has already projected the player's own offset and left `tdepth` at 0; once a
@@ -208,6 +221,12 @@ On main the length follows the view (a picture there is 4.45 fields at the spawn
 and the length to be within 2 fields of that. Mutant (`test/pacing-mutants.sh`, in CI): the credit test removed,
 so every call sends again -- "fire: 768 samples took 14.7 fields, want 26.7 (28.75 a field): the effect is paced
 by the pictures drawn, not by the field clock".
+
+The cap has its own case: a shot during which a guard appears 1.5 cells ahead, whose frame is scaled to a new
+width in a picture that leaves 9.5 fields between two samples. The credit reaches 144 and stops there, the shot
+lasts 36.1 fields (26.7 plus what the cap withheld and the two first pictures of the guard) and must not end
+early. Mutant: the cap removed -- "fire, slow picture: the credit reached 252 samples, more than the 144 the
+four-field cap allows: after a slow picture the effect runs ahead".
 
 **Cost:** +14 cycles a picture when no effect plays (one `inc` in the field interrupt, twice a picture; the idle
 `audioSlice()` is the same three instructions), 36,054 -> 36,069. While an effect plays, a call that sends costs

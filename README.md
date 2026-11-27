@@ -158,7 +158,7 @@ to rebuild the engine**; if the directory also holds `wyrmfire.bin` and
     node test/harness/clock.cjs cloadm run                                    # level clock counts every field, loads included
     node test/harness/end-screen.cjs cloadm run                               # TIME mm:ss and KILLS on the level clear
     sh test/clock-mutants.sh cloadm run/wyrmfire.vdk                          # clock mutants must fail (needs CMOC + LWTOOLS)
-    sh test/pacing-mutants.sh cloadm run/wyrmfire.vdk                         # per-picture sound and a slower load must fail (needs CMOC + LWTOOLS)
+    sh test/pacing-mutants.sh cloadm run/wyrmfire.vdk                         # per-picture sound, no credit cap and a slower load must fail (needs CMOC + LWTOOLS)
     node test/harness/credits.cjs cloadm run                                  # credits screen (Freedoom disk) and its mutant
 
 Level disks converted from id Software WADs stay on your machine: never

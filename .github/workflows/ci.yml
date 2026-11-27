@@ -160,7 +160,7 @@ jobs:
         run: node test/harness/sprites.cjs cloadm build
       # Every picture of a scripted run, hashed at the exact picture boundary: the renderer may get faster, but it
       # must draw what it drew. An intended change to the picture re-pins test/identity.sha256 in the same commit.
-      - name: Pictures are the pinned ones (1,665 pictures, Freedoom E1M1)
+      - name: Pictures are the pinned ones (1,743 pictures, Freedoom E1M1)
         run: |
           node test/harness/identity.cjs cloadm build shots/pictures.txt
           sha256sum shots/pictures.txt | cut -d' ' -f1 | diff - test/identity.sha256
