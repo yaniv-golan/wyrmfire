@@ -68,27 +68,94 @@ asm void band(){
 @out puls a,b,pc
  }
 }
-/* Take a band off: rows A..B to 0 when bandInk is not 0, else only the two edge rows. Nothing if B<=A. */
-asm void eraseBand(){
+/* markOne: rows mTop..mEnd-1 of the column whose entry is X were drawn over. */
+asm void markOne(){
  asm {
-    pshs b,a
-    cmpb ,s
-    bls @out
-    jsr _rowAt
-    ldb 1,s
-    subb ,s
-    tst _bandInk
-    beq @two
+    lda ,x
+    bne @merge
+    lda _mTop
+    sta -64,x
+    lda _mEnd
+    sta ,x
+    rts
+@merge lda _mTop
+    cmpa -64,x
+    bhs @m1
+    sta -64,x
+@m1 lda _mEnd
+    cmpa ,x
+    bls @m2
+    sta ,x
+@m2 rts
+ }
+}
+/* markCols: the same for B columns from column A of the page being drawn. */
+asm void markCols(){
+ asm {
+    ldx _dirtBase
+    leax a,x
+@c  pshs b
+    jsr _markOne
+    puls b
+    leax 1,x
+    decb
+    bne @c
+    rts
+ }
+}
+/* paint1: rows A..B (inclusive, A<=B) of the current column get what the wall band newSig[0..1] with ink newSig[4]
+ * puts there on an empty column: 0 above the top row, $FF on it, the ink between, $FF on the bottom row, 0 below
+ * (all 0 when the band is empty). The portal band goes over it afterwards (band()). Keeps Y and U. */
+static byte pRow,pEnd;
+asm void paint1(){
+ asm {
     incb
-    clra
-    jsr _fillRows
-    bra @out
-@two clr ,x
-    lda #32
-    mul
-    leax d,x
-    clr ,x
-@out puls a,b,pc
+    stb _pEnd
+    sta _pRow
+    jsr _rowAt
+    lda _newSig+1
+    cmpa _newSig
+    bls @blank
+    lda _newSig
+    clrb
+    bsr @seg
+    lda _newSig
+    inca
+    ldb #255
+    bsr @seg
+    lda _newSig+1
+    ldb _newSig+4
+    bsr @seg
+    lda _newSig+1
+    inca
+    ldb #255
+    bsr @seg
+@blank lda _pEnd
+    clrb
+@seg cmpa _pEnd
+    bls @s1
+    lda _pEnd
+@s1 suba _pRow
+    bls @s9
+    pshs b
+    tfr a,b
+    adda _pRow
+    sta _pRow
+    puls a
+    jmp _fillRows
+@s9 rts
+ }
+}
+/* paintBetween: paint1 over the rows from A to B, whichever is the larger; nothing when they are equal. */
+asm void paintBetween(){
+ asm {
+    pshs b
+    cmpa ,s+
+    beq @r
+    blo @go
+    exg a,b
+@go jmp _paint1
+@r  rts
  }
 }
 #define AREA ((byte*)0x7a00)
@@ -137,45 +204,33 @@ static byte loadArea(byte zone){
  * it before the first picture (clearSignatures), together with the door phases and the sprite row runs above it
  * ($0388-$03DF, native.c): 502 bytes in all. */
 #define SIGNATURES ((byte*)0x208)
-static void clearSignatures(){word i;for(i=0;i<502;i++)SIGNATURES[i]=0;}
-static const byte *view,*adjacent;
-static byte blendWeight,shading;
-static byte start,newSig[6],newDist,lift;static byte *dirtyPtr;
-asm void clearColumn(){
+static void clearSignatures(){
  asm {
-    clra
-    ldb #20
-@loop
-    sta 0,x
-    sta 32,x
-    sta 64,x
-    sta 96,x
-    leax 128,x
-    sta 0,x
-    sta 32,x
-    sta 64,x
-    sta 96,x
-    leax 128,x
-    decb
-    bne @loop
-    rts
+    ldx #$0208
+@z  clr ,x+
+    cmpx #$03fe
+    bne @z
  }
 }
+static const byte *view,*adjacent;
+static byte blendWeight,shading;
+static byte start,newDist,lift,touched,wNow;static byte *dirtAt;
 /* The 32 wall columns of the picture. For each: four DAC samples (audioSlice), the view table's entry for the
  * column's ray (blended with the adjacent cell's when there is one: value + (other-value)*blendWeight/256,
  * rounded), the door lift, then the six-byte signature {top, bottom, portal top, portal bottom, ink, portal ink}.
- * A column whose signature is the one on this page and that no sprite touched is left alone. Y = the page's
- * signature for the column, U = the view entry. */
+ * A column whose signature is the one on this page and that no sprite touched is left alone. Otherwise only the
+ * rows that differ are painted: the rows a sprite or a text drew over (dirt), the rows between the old and the
+ * new edge of the wall band when it kept its ink and still overlaps itself (else the whole of both), the rows of
+ * a portal band that changed; then the portal band is drawn over the wall band again. The result is what
+ * clearing the column and drawing both bands gives. Y = the page's signature for the column, U = the view entry. */
 asm void columns(){
  asm {
     pshs u,y
     ldy #$0208
-    ldx #$f8c0
     tst _page
     beq @p0
     leay 192,y
-    leax 32,x
-@p0 stx _dirtyPtr
+@p0
     clr _col
 @col jsr _audioSlice
     ldb _col
@@ -312,49 +367,101 @@ asm void columns(){
     ldx #_rayDistance
     lda _newDist
     sta b,x
-    ldx _dirtyPtr
+    ldx _dirtBase
     abx
-    tst ,x
-    bne @clear
-    ldd _newSig
+    stx _dirtAt
+    clr _touched
+    lda 64,x
+    beq @w0
+    cmpa _wNow
+    beq @w0
+    inc _touched
+    ldd #$7c9f
+    jsr _paint1
+@w0 ldd _newSig
     cmpd ,y
-    bne @changed
-    ldd _newSig+2
-    cmpd 2,y
-    bne @changed
-    ldd _newSig+4
-    cmpd 4,y
-    beq @next
-@changed lda 4,y
-    ora 5,y
-    beq @erase
+    bne @chg1
+    lda _newSig+4
+    cmpa 4,y
+    beq @b2
+@chg1 inc _touched
     lda 1,y
-    suba ,y
-    cmpa #56
-    bls @erase
-@clear clr ,x
-    ldd _back
-    addb _col
-    adca #0
-    tfr d,x
-    jsr _clearColumn
-    bra @draw
-@erase lda 4,y
-    sta _bandInk
-    ldd ,y
-    jsr _eraseBand
-    lda 5,y
-    sta _bandInk
+    cmpa ,y
+    bls @oldNone
+    lda _newSig+1
+    cmpa _newSig
+    bls @newNone
+    lda _newSig+4
+    cmpa 4,y
+    bne @whole
+    lda ,y
+    cmpa _newSig
+    bhs @mx
+    lda _newSig
+@mx sta _lift
+    ldb 1,y
+    cmpb _newSig+1
+    bls @mn
+    ldb _newSig+1
+@mn cmpb _lift
+    bls @whole
+    lda ,y
+    ldb _newSig
+    jsr _paintBetween
+    lda 1,y
+    ldb _newSig+1
+    jsr _paintBetween
+    bra @b2
+@whole lda ,y
+    cmpa _newSig
+    bls @wl
+    lda _newSig
+@wl ldb 1,y
+    cmpb _newSig+1
+    bhs @wh
+    ldb _newSig+1
+@wh jsr _paint1
+    bra @b2
+@oldNone ldd _newSig
+    pshs a
+    cmpb ,s+
+    bls @b2
+    jsr _paint1
+    bra @b2
+@newNone ldd ,y
+    jsr _paint1
+@b2 ldd _newSig+2
+    cmpd 2,y
+    bne @chg2
+    lda _newSig+5
+    cmpa 5,y
+    beq @dirt
+@chg2 inc _touched
     ldd 2,y
-    jsr _eraseBand
-@draw ldd _newSig+4
-    std 4,y
-    sta _bandInk
+    pshs a
+    cmpb ,s+
+    bls @dirt
+    jsr _paint1
+@dirt ldx _dirtAt
+    ldb ,x
+    beq @fin
+    inc _touched
+    clr ,x
+    decb
+    lda -64,x
+    pshs a
+    cmpb ,s+
+    blo @fin
+    jsr _paint1
+@fin tst _touched
+    beq @next
+    ldx _dirtAt
+    clr 64,x
     ldd _newSig
     std ,y
-    jsr _band
-    lda 5,y
-    sta _bandInk
+    ldd _newSig+4
+    std 4,y
+    stb _bandInk
     ldd _newSig+2
     std 2,y
     jsr _band
@@ -370,7 +477,7 @@ static void scene(){
  byte x=px>>8,y=py>>8,otherX=x,otherY=y;
  int dx=(int)(byte)px-128,dy=(int)(byte)py-128;
  start=angle*3;
- page=back==(byte*)0xe000;
+ page=0;dirtBase=dirt+64;if(back==(byte*)0xe000){page=1;dirtBase=dirt+96;}
  if(!loadArea(areaAt(x,y)))return;
  view=viewAt(x,y);if(!view)return;
  if(dx<0? -dx>(dy<0?-dy:dy):dx>(dy<0?-dy:dy)){otherX+=dx<0?-1:1;blendWeight=dx<0?-dx:dx;}

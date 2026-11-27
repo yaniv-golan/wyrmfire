@@ -28,7 +28,6 @@ static word length;static byte *unpackTarget;
 #define wind ((byte*)0xf800)
 #define waitForAttack ((byte*)0xf840)
 #define nearby ((byte*)0xf880)
-#define dirtyCols(p) ((byte*)0xf8c0+((word)(p)<<5))
 #define aimColumn ((byte*)0xf900)
 #define aimDepth ((byte*)0xf940)
 static byte movingDoor,rise;
@@ -74,6 +73,13 @@ static void startLevel(){
  movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte page;
+/* What a sprite or a text left on a column, per page and column: dirt[p*32+c] is the first row touched,
+ * dirt[64+..] the row after the last (0: nothing), dirt[128+..] which weapon frame stands on rows 124..159 of the
+ * column (0: none). scene() repaints only those rows; the weapon is drawn again only where it is not standing. */
+static byte dirt[192];
+static byte *dirtBase;          /* &dirt[64+page*32]: the first row is at -64, the weapon at +64 */
+static byte mTop,mEnd;
+static byte newSig[6];
 static byte *blitDest;
 static byte blitRows,blitWidth;
 static asm void blit(){
@@ -98,9 +104,13 @@ static asm void blit(){
  }
 }
 static void sprite(const byte *shape,byte col0,byte row,byte w,byte h){
- byte j;if(row>=160 || col0+w>32)return;
+ if(row>=160 || col0+w>32)return;
  source=shape;blitDest=back+((word)row<<5)+col0;blitWidth=w;blitRows=row+h>160?160-row:h;
- for(j=0;j<w;j++)dirtyCols(page)[col0+j]=1;
+ mTop=row;mEnd=row+blitRows;asm{
+    lda :col0
+    ldb :w
+    jsr _markCols
+ }
  blit();
 }
 static void text(byte x,byte y,const char *s){
@@ -202,6 +212,8 @@ static void move(int dir){
  if(cross(px>>8,py>>8,x>>8,py>>8)&&loadArea(areaAt(x>>8,py>>8)))px=x;
  if(cross(px>>8,py>>8,px>>8,y>>8)&&loadArea(areaAt(px>>8,y>>8)))py=y;
 }
+/* Every row of every column of both pages is to be repainted. */
+static void dirtyAll(){byte i;for(i=0;i<64;i++){dirt[i]=0;dirt[64+i]=160;}}
 static void cue(byte finish){
  /* Build the end screen on the page that is NOT on the screen, then flip the SAM to show it, exactly as draw()
   * does at the end of its own body. `back` always holds the hidden page, so the text goes there.
@@ -229,7 +241,7 @@ static void cue(byte finish){
  if(back==(byte*)0xe000){IO(0xffc8)=0;IO(0xffcf)=0;IO(0xffd1)=0;IO(0xffd3)=0;back=(byte*)0x400;}
  else{IO(0xffce)=0;IO(0xffd0)=0;IO(0xffd2)=0;IO(0xffc9)=0;back=(byte*)0xe000;}
  tune(finish?victoryNotes:interNotes);
- for(i=0;i<32;i++){dirtyCols(0)[i]=1;dirtyCols(1)[i]=1;}
+ dirtyAll();
 }
 static void use(){
  byte x=px>>8,y=py>>8;int j;
@@ -497,14 +509,12 @@ static asm void drawColumns(){
     abx
     stx _colSrc
     jsr _blitColumn
-    ldx #$f8c0
-    tst _page
-    beq @p0
-    leax 32,x
-@p0 ldb _cc
-    lda #1
-    sta b,x
-    inca
+    ldx _dirtBase
+    ldb _cc
+    abx
+    jsr _markOne
+    ldb _cc
+    lda #2
     subb #13
     cmpb #6
     bhi @nh
@@ -578,7 +588,7 @@ static byte drawScaled(const byte *shape,byte hw2){
  /* One division a thing: inv = 65535/tz (tz >= 18, so inv <= 3640). Height hw*512/tz = inv*(2*hw)/256, floor
   * line 79 + 2560/tz = 79 + inv*10/256. */
  word inv=65535u/(word)tz,a;byte h=(byte)((inv*hw2)>>8),wpx=h-(h>>3),top;int left;
- yy=(byte)(88+((inv*10)>>8))-h;top=yy<8?0:yy-8;dH=h;
+ yy=(byte)(88+((inv*10)>>8));mEnd=yy>168?160:yy-8;yy-=h;top=yy<8?0:yy-8;dH=h;mTop=top;
  /* Centre pixel 128 + 160*th/tz: 128*|th|/tz = (|th|/2)*inv/256 (|th| <= 1.25 tz keeps the product in a word),
   * plus a quarter of it. The frame covers every byte column its true span [left, left+wpx) touches, so a column
   * holds sprite exactly where the thing is. */
@@ -628,10 +638,66 @@ static void actors(){
 static byte oldHP[2],oldAmmo[2],oldKeys[2],oldLevel[2],valid[2];
 #include "floppy.h"
 #include "scene.h"
+/* The weapon, 5 bytes by 36 rows at column 14, row 124, one column at a time. A column is skipped when this
+ * frame already stands on it (scene() painted nothing there) and no monster or fireball was drawn on it in this
+ * picture: drawing the same mask-and-ink frame again over itself, or over anything drawn over it, gives the same
+ * bytes as drawing it once on top. */
+static const byte *wShape;
+asm void weaponCols(){
+ asm {
+    pshs u,y
+    ldy _dirtBase
+    leay 14,y
+    ldd _back
+    addd #3982
+    std _colDest
+    ldu _wShape
+    lda #5
+    sta _cnt
+@c  lda 64,y
+    cmpa _wNow
+    bne @blit
+    tst ,y
+    beq @skip
+@blit lda _wNow
+    sta 64,y
+    ldx _colDest
+    pshs u
+    ldb #36
+@row lda ,x
+    anda ,u
+    ora 1,u
+    sta ,x
+    leax 32,x
+    leau 10,u
+    decb
+    bne @row
+    puls u
+@skip leau 2,u
+    leay 1,y
+    ldx _colDest
+    leax 1,x
+    stx _colDest
+    dec _cnt
+    bne @c
+    puls y,u,pc
+ }
+}
+static void overText(){
+ asm {
+    ldd #$4c55
+    std _mTop
+    clra
+    ldb #32
+    jsr _markCols
+ }
+}
 static void draw(){
- byte i;scene();
- actors();missiles();sprite(gun==2?fist:flashTime?flash:gun?shotgun:weapon,14,124,5,36);
- i=(back==(byte*)0xe000);
+ byte i;
+ if(gun==2){wShape=fist;wNow=1;}else if(flashTime){wShape=flash;wNow=2;}else if(gun){wShape=shotgun;wNow=3;}else{wShape=weapon;wNow=4;}
+ scene();
+ actors();missiles();weaponCols();
+ i=page;
  if(!valid[i]){
    byte j;for(j=0;j<32;j++)back[5120+j]=255;
    text(1,164,"AMMO");text(9,164,"HEALTH");text(19,164,"KEY");text(25,164,"MAP");
@@ -642,8 +708,8 @@ static void draw(){
  if(!valid[i]||keys!=oldKeys[i]){keysHud(19,177,keys);oldKeys[i]=keys;}
  if(!valid[i]||level!=oldLevel[i]){number(25,177,level+1);oldLevel[i]=level;}
  valid[i]=1;
- if(!health){text(6,76,"YOU DIED. ENTER RETRIES");for(i=0;i<32;i++)dirtyCols(page)[i]=1;}
- if(won){text(5,76,"LEVEL CLEAR. ENTER");for(i=0;i<32;i++)dirtyCols(page)[i]=1;}
+ if(!health){text(6,76,"YOU DIED. ENTER RETRIES");overText();}
+ if(won){text(5,76,"LEVEL CLEAR. ENTER");overText();}
  /* ONE-PICTURE BORDER FLASH when a hit lands: the VDG's colour set is inverted for the frame the hit is drawn in
   * (CSS, $FF22 bit 3, which the engine leaves set to 1), then put back on the next draw. No memory moves, so it
   * costs the player nothing; hurtFlash is set by hurt() and counted down once a frame. */
