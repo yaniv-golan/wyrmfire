@@ -212,7 +212,7 @@ by the pictures drawn, not by the field clock".
 **Cost:** +14 cycles a picture when no effect plays (one `inc` in the field interrupt, twice a picture; the idle
 `audioSlice()` is the same three instructions), 36,054 -> 36,069. While an effect plays, a call that sends costs
 about 30 cycles more than it did and a call without credit about 25; the samples themselves cost what they
-always did, and there are fewer of them a picture. 59 bytes of code (`program_end` $4FAC -> $4FE9). The pictures
+always did, and there are fewer of them a picture. 61 bytes of code and data (`program_end` $4FAC -> $4FE9). The pictures
 and the game state are the same (the identity log does not hash the sound position and its SHA-256 is unchanged);
 what a player hears also differs in grain: the four-sample bursts now come at the start of each field instead of
 evenly through a picture.
