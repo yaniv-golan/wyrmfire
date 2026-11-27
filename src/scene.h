@@ -190,7 +190,8 @@ static byte loadArea(byte zone){
      * output never overtakes unread input. */
     verifyLength=(word)diskCount[zone-1]<<8;
     verifyStart=AREA_END-verifyLength;
-    if(!diskRead(diskOffset[zone-1],diskCount[zone-1],verifyStart)){loadFailure=1;return 0;}
+    epoch++;
+ if(!diskRead(diskOffset[zone-1],diskCount[zone-1],verifyStart)){loadFailure=1;return 0;}
     if(checksum()!=((word *)(PACK+*(word *)(PACK+28)))[zone-1]){loadFailure=1;return 0;}
     source=verifyStart;
  }
@@ -213,8 +214,13 @@ static void clearSignatures(){
  }
 }
 static const byte *view,*adjacent;
-static byte blendWeight,shading;
-static byte start,newDist,lift,touched,wNow;static byte *dirtAt;
+/* The still view. The 32 columns are a function of the view entries, the blend, the heading, the hatching and
+ * the door phases: {view, adjacent} and {blendWeight, shading, start, epoch} (epoch counts every change to the
+ * view tables in AREA and to phase[]). When all of that is what the last pass used (lastView, lastKey) and this
+ * page's signatures were made from it (fresh[page]), every column's signature and rayDistance[] are already
+ * right, and a column is visited only for what a sprite left on it. */
+static const byte *lastView,*lastAdjacent;static byte lastKey[4],fresh[2],fast;
+static byte newDist,lift,touched,wNow;static byte *dirtAt;
 /* The 32 wall columns of the picture. For each: four DAC samples (audioSlice), the view table's entry for the
  * column's ray (blended with the adjacent cell's when there is one: value + (other-value)*blendWeight/256,
  * rounded), the door lift, then the six-byte signature {top, bottom, portal top, portal bottom, ink, portal ink}.
@@ -230,9 +236,58 @@ asm void columns(){
     tst _page
     beq @p0
     leay 192,y
-@p0
+@p0 clr _fast
+    ldx #_fresh
+    ldb _page
+    abx
+    ldu _view
+    cmpu _lastView
+    bne @new
+    ldu _adjacent
+    cmpu _lastAdjacent
+    bne @new
+    ldd _blendWeight
+    cmpd _lastKey
+    bne @new
+    ldd _start
+    cmpd _lastKey+2
+    bne @new
+    lda ,x
+    sta _fast
+    bra @key
+@new ldu _view
+    stu _lastView
+    ldu _adjacent
+    stu _lastAdjacent
+    ldd _blendWeight
+    std _lastKey
+    ldd _start
+    std _lastKey+2
+    clr _fresh
+    clr _fresh+1
+@key lda #1
+    sta ,x
     clr _col
 @col jsr _audioSlice
+    tst _fast
+    beq @full
+    ldx _dirtBase
+    ldb _col
+    abx
+    lda 64,x
+    beq @f1
+    cmpa _wNow
+    bne @f2
+@f1 tst ,x
+    lbeq @next
+@f2 ldd ,y
+    std _newSig
+    ldd 2,y
+    std _newSig+2
+    ldd 4,y
+    std _newSig+4
+    lbra @merge
+@full
     ldb _col
     ldx #_rayOffset
     lda b,x
@@ -367,7 +422,8 @@ asm void columns(){
     ldx #_rayDistance
     lda _newDist
     sta b,x
-    ldx _dirtBase
+@merge ldx _dirtBase
+    ldb _col
     abx
     stx _dirtAt
     clr _touched
@@ -474,14 +530,14 @@ asm void columns(){
  }
 }
 static void scene(){
- byte x=px>>8,y=py>>8,otherX=x,otherY=y;
- int dx=(int)(byte)px-128,dy=(int)(byte)py-128;
+ /* the player's distance from the cell centre on each axis, 0..128; the larger one picks the neighbour to blend with */
+ byte x=px>>8,y=py>>8,otherX=x,otherY=y,fx=(byte)px,fy=(byte)py,ax=fx<128?128-fx:fx-128,ay=fy<128?128-fy:fy-128;
  start=angle*3;
  page=0;dirtBase=dirt+64;if(back==(byte*)0xe000){page=1;dirtBase=dirt+96;}
  if(!loadArea(areaAt(x,y)))return;
  view=viewAt(x,y);if(!view)return;
- if(dx<0? -dx>(dy<0?-dy:dy):dx>(dy<0?-dy:dy)){otherX+=dx<0?-1:1;blendWeight=dx<0?-dx:dx;}
- else{otherY+=dy<0?-1:1;blendWeight=dy<0?-dy:dy;}
+ if(ax>ay){if(fx<128)otherX--;else otherX++;blendWeight=ax;}
+ else{if(fy<128)otherY--;else otherY++;blendWeight=ay;}
  adjacent=0;
  if(blendWeight>8&&areaAt(otherX,otherY)==currentArea&&cross(x,y,otherX,otherY))adjacent=viewAt(otherX,otherY);
  columns();

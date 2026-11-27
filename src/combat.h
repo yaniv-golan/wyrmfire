@@ -69,7 +69,7 @@ static void missiles(){
     int z=(x*tca+y*tsa)>>5;   /* tca, tsa: this picture's cosines, set by actors() just before */
     int side=(x*tsa-y*tca)>>5;
     if(z>2&&side<z&&side> -z){int col=16+side*20/z;if(col>=1&&col<31&&z/4<=rayDistance[col]+2)
-       sprite(fireball,col-1,74,2,12);}
+       ball(col-1);}
  }
 }
 static void hit(byte i,byte damage){

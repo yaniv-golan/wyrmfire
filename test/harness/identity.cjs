@@ -11,7 +11,8 @@
 // Each line is the picture number, a hash of the 6,144 bytes of the page on the screen and a hash of the game
 // state. The script walks and turns from the spawn with a seeded key sequence, fires all three weapons, opens
 // doors, jumps to cells all over the map (every region streams from the disk), and stands monsters and pickups at
-// every scale, at the screen edges, casting, in a crowd and behind walls.
+// every scale, at the screen edges, casting, in a crowd and behind walls; then it stands still, toggles the
+// hatching, alternates views, opens doors without moving, dies, starts again and clears the level.
 const fs = require('fs');
 const [repo, dir, outFile] = process.argv.slice(2);
 const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols(files.map);
@@ -86,6 +87,48 @@ const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols
   hold(['SPACE']);
   for (let i = 0; i < 12; i++) stand(128, 128, (i * 3) & 31, [[sx + 2, sy, 3], [sx + 3, sy + 1, 1], [sx + 3, sy - 1, 2]], 0, 0, 4);
   hold([]);
+
+  // 4. The still view and what must end it. The same view for several pictures, then: the hatching toggled; two
+  //    views alternating every picture and every second picture; a door opening while the player stands still;
+  //    dying and starting again; the exit, the level-clear screen and starting again.
+  const G = (x, y) => read(boot.GRID + 128 * y + x);
+  const at = (x, y, fx, fy, angle) => { put('px', x, fx); put('py', y, fy); put('angle', angle); put('health', 100); };
+  put('count', 2); put('things', sx + 3, sy, 1, 9, sx + 5, sy + 1, 3, 9); put('waitForAttack', 255, 255); put('wind', 0, 0);
+  at(sx, sy, 128, 128, 0); step('still', 6);
+  hold(['D']); step('still', 1); hold([]); step('still', 5); hold(['D']); step('still', 1); hold([]); step('still', 3);
+  for (let i = 0; i < 10; i++) { at(sx, sy, i & 1 ? 40 : 128, 128, 0); step('alt'); }
+  for (let i = 0; i < 12; i++) { at(sx, sy, 128, 128, i & 2 ? 3 : 0); step('alt'); }
+  for (let i = 0; i < 9; i++) { at(sx + (i % 3 === 2 ? 1 : 0), sy, 128, 128, 0); step('alt'); }
+  let doors = 0;
+  for (let y = 2; y < rows - 2 && doors < 3; y++) for (let x = 2; x < 126 && doors < 3; x++) {
+    if (!(G(x, y) & 16) || (G(x, y) >> 6)) continue;
+    for (const [dx, dy, angle, bit] of [[-1, 0, 0, 1], [1, 0, 16, 2], [0, -1, 8, 4], [0, 1, 24, 8]]) {
+      const c = G(x + dx, y + dy);
+      if (!(c & 15) || (c & 0x30) || !(c & bit)) continue;
+      at(x + dx, y + dy, 128, 128, angle); step('door', 3);
+      hold(['E']); step('door', 1); hold([]); step('door', 12);
+      hold(['UP']); step('door', 6); hold([]); step('door', 2);
+      doors++; break;
+    }
+  }
+  if (!doors) throw Error('no door to open in this map');
+  at(sx, sy, 128, 128, 0); step('still', 3);
+  put('health', 0); for (let i = 0; i < 4; i++) { picture(); record('dead'); }
+  hold(['ENTER']); picture(); record('dead'); hold([]);
+  for (let i = 0; i < 6; i++) { picture(); record('again'); }
+  let exits = 0;
+  for (let y = 2; y < rows - 2 && !exits; y++) for (let x = 2; x < 126 && !exits; x++) {
+    if (!(G(x, y) & 32)) continue;
+    for (const [dx, dy, angle, bit] of [[-1, 0, 0, 1], [1, 0, 16, 2], [0, -1, 8, 4], [0, 1, 24, 8]]) {
+      const c = G(x + dx, y + dy);
+      if (!(c & 15) || (c & 0x30) || !(c & bit)) continue;
+      at(x + dx, y + dy, 128, 128, angle); step('exit', 3);
+      hold(['E']); step('exit', 1); hold(['ENTER']);          // ENTER skips the cue, then starts the level again
+      step('exit', 1); hold([]); step('exit', 6);
+      exits++; break;
+    }
+  }
+  if (!exits) throw Error('no exit to use in this map');
   fs.writeFileSync(outFile, lines.join('\n') + '\n');
   console.log(`${lines.length} pictures recorded to ${outFile}`);
 })().catch((e) => { console.error(e); process.exitCode = 1; });

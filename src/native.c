@@ -31,7 +31,8 @@ static word length;static byte *unpackTarget;
 #define aimColumn ((byte*)0xf900)
 #define aimDepth ((byte*)0xf940)
 static byte movingDoor,rise;
-static void animateDoor(){byte i;if(!movingDoor)return;rise=++phase[movingDoor];if(rise==7)for(i=0;i<PACK[10];i++)if(doorGroups[i]==movingDoor)GRID[doorCells[i]]&=15;if(rise>=8)movingDoor=0;}
+static byte blendWeight,shading,start,epoch;
+static void animateDoor(){byte i;if(!movingDoor)return;epoch++;rise=++phase[movingDoor];if(rise==7)for(i=0;i<PACK[10];i++)if(doorGroups[i]==movingDoor)GRID[doorCells[i]]&=15;if(rise>=8)movingDoor=0;}
 static byte loadArea(byte zone);static byte areaAt(byte x,byte y);
 
 static asm void decompress(){
@@ -70,7 +71,7 @@ static void startLevel(){
  count=PACK[6];
  for(i=0;i<count;i++){Thing *o=things+i;o->x=*p++;o->y=*p++;o->kind=*p++;o->hp=o->kind==5?12:o->kind>=3?4:2;}
  px=((word)PACK[7]<<8)+128;py=((word)PACK[8]<<8)+128;angle=PACK[9];keys=0;kills=0;
- movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;cooldown=0;flashTime=0;hurtFlash=0;
+ movingDoor=0;rise=0;for(i=0;i<64;i++)phase[i]=0;epoch++;cooldown=0;flashTime=0;hurtFlash=0;
 }
 static byte page;
 /* What a sprite or a text left on a column, per page and column: dirt[p*32+c] is the first row touched,
@@ -103,12 +104,14 @@ static asm void blit(){
     puls y,u,pc
  }
 }
-static void sprite(const byte *shape,byte col0,byte row,byte w,byte h){
- if(row>=160 || col0+w>32)return;
- source=shape;blitDest=back+((word)row<<5)+col0;blitWidth=w;blitRows=row+h>160?160-row:h;
- mTop=row;mEnd=row+blitRows;asm{
+/* A fireball: 2 bytes by 12 rows at row 74, columns col0 and col0+1 (0..30, from missiles()). */
+static void ball(byte col0){
+ source=fireball;blitDest=back+74*32+col0;blitWidth=2;blitRows=12;
+ asm {
+    ldd #$4a56
+    std _mTop
     lda :col0
-    ldb :w
+    ldb #2
     jsr _markCols
  }
  blit();
@@ -251,7 +254,7 @@ static void use(){
  byte nx=(px+cosine[angle]*j*4)>>8,ny=(py+cosine[(angle+24)&31]*j*4)>>8;
  byte *b=at(nx,ny);
  if(*b&32){clockOn=0;won=1;cue(1);return;}
- if(*b&16){byte lock=*b>>6;if(lock && !(keys&(1<<(lock-1))))return;{byte i;if(movingDoor)return;for(i=0;i<PACK[10];i++)if(doorCells[i]==(word)(b-GRID)){movingDoor=doorGroups[i];phase[movingDoor]=1;rise=1;break;}}sound(SND_DOOR);return;}
+ if(*b&16){byte lock=*b>>6;if(lock && !(keys&(1<<(lock-1))))return;{byte i;if(movingDoor)return;for(i=0;i<PACK[10];i++)if(doorCells[i]==(word)(b-GRID)){movingDoor=doorGroups[i];phase[movingDoor]=1;rise=1;epoch++;break;}}sound(SND_DOOR);return;}
  if(!cross(x,y,nx,y)||!cross(nx,y,nx,ny))return;
  x=nx;y=ny;
  }
