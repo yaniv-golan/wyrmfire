@@ -149,11 +149,13 @@ jobs:
           cp level/level.vdk build/wyrmfire.vdk
           CLOADM=$PWD/cloadm WYRMFIRE_BUILD=$PWD/build WYRMFIRE_SHOTS=$PWD/shots node --test test/smoke.test.mjs
       - name: Disk-region stall probe
-        run: node test/harness/regions.cjs cloadm build shots/regions.json
+        run: node test/harness/regions.cjs cloadm build shots/regions.json --max-unpack-fields 2087 --max-read-fields 2902
       - name: Swap harness
         run: node test/harness/swap.cjs cloadm build
       - name: Encounter harness
         run: node test/harness/encounter.cjs cloadm build
+      - name: Sound effects reach the DAC whole, at 28.75 samples a field whatever the picture rate
+        run: node test/harness/sound.cjs cloadm build
       - name: Sprites on the floor, scaled with depth, occluded per column
         run: node test/harness/sprites.cjs cloadm build
       # Every picture of a scripted run, hashed at the exact picture boundary: the renderer may get faster, but it
@@ -206,3 +208,5 @@ jobs:
           git checkout -q FETCH_HEAD && git log --oneline -1
       - name: Mutants
         run: sh test/clock-mutants.sh cloadm level/level.vdk
+      - name: Sound paced by pictures again, and a slower region load, must each fail their harness
+        run: sh test/pacing-mutants.sh cloadm level/level.vdk
