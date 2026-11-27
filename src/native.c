@@ -139,13 +139,39 @@ static void twodigits(byte x,byte y,byte n){
  char digits[3];digits[0]='0'+n/10;digits[1]='0'+n%10;digits[2]=0;text(x,y,digits);
 }
 static const byte *audioPos,*audioEnd;
-static void sound(byte i){audioPos=ASSET(i);audioEnd=audioPos+ASSET_LEN(i);}
+static byte audioSeen,audioCredit;
+static void sound(byte i){audioPos=ASSET(i);audioEnd=audioPos+ASSET_LEN(i);audioSeen=fieldTick;audioCredit=4;}
 /* At most four DAC samples per call. Renderer work and input continue while
- * the effect is active. No call holds the CPU for the length of a gunshot. */
+ * the effect is active. No call holds the CPU for the length of a gunshot.
+ *
+ * The renderer calls this once a wall column, 32 times a picture, and that used to be the pace: 128 samples a
+ * picture, so an effect played faster whenever pictures came faster. The pace is now the field clock: every
+ * field the interrupt counted (fieldTick) grants 29 samples of credit, 28 on every fourth, 28.75 a field -- what
+ * 128 a picture came to when a picture of the spawn view took 4.45 fields (main at 2f47134) -- and a call sends
+ * its four samples only when four are in credit. One field is taken up a call and the credit stops growing at
+ * 116 (four fields: a picture that scales a new frame can take that long between two column loops), so an effect
+ * catches up after a slow picture but never runs far ahead. sound() starts an effect with its first four samples in hand. */
 asm void audioSlice(){
  asm {
     ldx _audioPos
     beq @done
+    lda _fieldTick
+    cmpa _audioSeen
+    beq @have
+    inc _audioSeen
+    lda _audioCredit
+    cmpa #116
+    bhs @have
+    adda #29
+    ldb _audioSeen
+    andb #3
+    bne @c
+    deca
+@c  sta _audioCredit
+@have lda _audioCredit
+    suba #4
+    bcs @done
+    sta _audioCredit
     ldb #4
 @next lda ,x+
     sta $ff20

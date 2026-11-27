@@ -46,11 +46,15 @@ asm void clockField(){
  * acknowledgements are tested in CLOADM (test/harness/clock.cjs): HS by enabling PIA0's CA1 interrupt; the ACIA by
  * raising an interrupt in CLOADM's 6551 model directly, since the engine never programs the 6551 to raise one --
  * so the ACIA case rests on that model's read-status-clears-IRQ behaviour, not on a real serial event. */
+/* fieldTick counts every field the interrupt takes, level clock running or not: the sound effects are paced by it
+ * (audioSlice, native.c). It stands still while IRQ is held (a disk transfer, a cue), and so do the effects. */
+static byte fieldTick;
 static asm void fieldIrq(){
  asm {
     lda $ff03
     bpl @other
     lda $ff02
+    inc _fieldTick
     lbsr _clockField
     rti
 @other lda $ff00
