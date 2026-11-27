@@ -105,45 +105,107 @@ asm void markCols(){
 }
 /* paint1: rows A..B (inclusive, A<=B) of the current column get what the wall band newSig[0..1] with ink newSig[4]
  * puts there on an empty column: 0 above the top row, $FF on it, the ink between, $FF on the bottom row, 0 below
- * (all 0 when the band is empty). The portal band goes over it afterwards (band()). Keeps Y and U. */
-static byte pRow,pEnd;
+ * (all 0 when the band is empty). The portal band goes over it afterwards (band()). Keeps Y and U.
+ * pN counts the rows still to paint; X walks down the column. */
+static byte pRow,pN;
 asm void paint1(){
  asm {
-    incb
-    stb _pEnd
     sta _pRow
+    subb _pRow
+    incb
+    stb _pN
     jsr _rowAt
     lda _newSig+1
     cmpa _newSig
-    bls @blank
+    bls @zero
     lda _newSig
-    clrb
-    bsr @seg
-    lda _newSig
-    inca
-    ldb #255
-    bsr @seg
-    lda _newSig+1
-    ldb _newSig+4
-    bsr @seg
-    lda _newSig+1
-    inca
-    ldb #255
-    bsr @seg
-@blank lda _pEnd
-    clrb
-@seg cmpa _pEnd
-    bls @s1
-    lda _pEnd
-@s1 suba _pRow
-    bls @s9
-    pshs b
+    suba _pRow
+    beq @atA
+    bcs @past
+    cmpa _pN
+    bhs @zero
     tfr a,b
-    adda _pRow
-    sta _pRow
-    puls a
+    nega
+    adda _pN
+    sta _pN
+    clra
+    jsr _fillRows
+@atA lda #255
+    sta ,x
+    leax 32,x
+    dec _pN
+    beq @done
+    lda _newSig
+    inca
+    bra @inside
+@past lda _pRow
+    cmpa _newSig+1
+    bhi @zero
+@inside nega
+    adda _newSig+1
+    beq @atB
+    cmpa _pN
+    blo @i1
+    lda _pN
+@i1 tfr a,b
+    nega
+    adda _pN
+    sta _pN
+    lda _newSig+4
+    jsr _fillRows
+    tst _pN
+    beq @done
+@atB lda #255
+    sta ,x
+    leax 32,x
+    dec _pN
+    beq @done
+@zero ldb _pN
+    clra
     jmp _fillRows
-@s9 rts
+@done rts
+ }
+}
+/* paintRow: the same for the single row A. */
+asm void paintRow(){
+ asm {
+    pshs a
+    jsr _rowAt
+    puls a
+    ldb _newSig+1
+    cmpb _newSig
+    bls @zero
+    cmpa _newSig
+    blo @zero
+    beq @ff
+    cmpa _newSig+1
+    bhi @zero
+    beq @ff
+    lda _newSig+4
+    sta ,x
+    rts
+@ff lda #255
+    sta ,x
+    rts
+@zero clr ,x
+    rts
+ }
+}
+/* paintBand: every row a band A..B (top, bottom) with ink bandInk writes on: all of them when the ink is not 0,
+ * else the two edge rows. Nothing if B<=A. */
+asm void paintBand(){
+ asm {
+    pshs b
+    cmpa ,s
+    bhs @out
+    tst _bandInk
+    beq @edges
+    leas 1,s
+    jmp _paint1
+@edges jsr _paintRow
+    lda ,s
+    jsr _paintRow
+@out puls b,pc
  }
 }
 /* paintBetween: paint1 over the rows from A to B, whichever is the larger; nothing when they are equal. */
@@ -211,6 +273,10 @@ static void clearSignatures(){
 @z  clr ,x+
     cmpx #$03fe
     bne @z
+    ldx #$fe00
+@d  clr ,x+
+    cmpx #$fec0
+    bne @d
  }
 }
 static const byte *view,*adjacent;
@@ -225,9 +291,12 @@ static byte newDist,lift,touched,wNow,wHurt;static byte *dirtAt;
  * column's ray (blended with the adjacent cell's when there is one: value + (other-value)*blendWeight/256,
  * rounded), the door lift, then the six-byte signature {top, bottom, portal top, portal bottom, ink, portal ink}.
  * A column whose signature is the one on this page and that no sprite touched is left alone. Otherwise only the
- * rows that differ are painted: the rows a sprite or a text drew over (dirt), the rows between the old and the
- * new edge of the wall band when it kept its ink and still overlaps itself (else the whole of both), the rows of
- * a portal band that changed; then the portal band is drawn over the wall band again. The result is what
+ * rows that differ are painted, each with what the new wall band puts there (paint1, paintRow): the rows a sprite
+ * or a text drew over (dirt); for a wall band that changed, the rows between its old and its new edges when it is
+ * filled, kept its ink and still overlaps itself, the rows from the higher top to the lower bottom when both are
+ * filled and overlap, and otherwise every row the old band and the new one write on (all of a filled band, the
+ * two edge rows of a hollow one); the rows a portal band that changed wrote on. Then the portal band is drawn
+ * over the wall band again. The result is what
  * clearing the column and drawing both bands gives. The weapon's frame stays on its column (dirt[128+..]) unless a
  * signature changed, rows from 124 down were repainted or the portal band reaches them (wHurt). maxRay is the
  * farthest wall of the picture: a thing deeper than maxRay+1 is behind every column. Y = the page's signature for the column, U = the view entry. */
@@ -449,29 +518,22 @@ asm void columns(){
     bne @chg1
     lda _newSig+4
     cmpa 4,y
-    beq @b2
+    lbeq @b2
 @chg1 inc _touched
     inc _wHurt
+    lda 4,y
+    beq @each
+    cmpa _newSig+4
+    bne @solid
+    sta _bandInk
     lda 1,y
     cmpa ,y
-    bls @oldNone
+    bls @each
     lda _newSig+1
     cmpa _newSig
-    bls @newNone
-    lda _newSig+4
-    cmpa 4,y
-    bne @whole
-    lda ,y
-    cmpa _newSig
-    bhs @mx
-    lda _newSig
-@mx sta _lift
-    ldb 1,y
-    cmpb _newSig+1
-    bls @mn
-    ldb _newSig+1
-@mn cmpb _lift
-    bls @whole
+    bls @each
+    bsr @lap
+    bls @each
     lda ,y
     ldb _newSig
     jsr _paintBetween
@@ -479,7 +541,17 @@ asm void columns(){
     ldb _newSig+1
     jsr _paintBetween
     bra @b2
-@whole lda ,y
+@solid tst _newSig+4
+    beq @each
+    lda 1,y
+    cmpa ,y
+    bls @each
+    lda _newSig+1
+    cmpa _newSig
+    bls @each
+    bsr @lap
+    bls @each
+    lda ,y
     cmpa _newSig
     bls @wl
     lda _newSig
@@ -489,14 +561,25 @@ asm void columns(){
     ldb _newSig+1
 @wh jsr _paint1
     bra @b2
-@oldNone ldd _newSig
-    pshs a
-    cmpb ,s+
-    bls @b2
-    jsr _paint1
-    bra @b2
-@newNone ldd ,y
-    jsr _paint1
+@lap lda ,y
+    cmpa _newSig
+    bhs @mx
+    lda _newSig
+@mx sta _lift
+    ldb 1,y
+    cmpb _newSig+1
+    bls @mn
+    ldb _newSig+1
+@mn cmpb _lift
+    rts
+@each lda 4,y
+    sta _bandInk
+    ldd ,y
+    jsr _paintBand
+    lda _newSig+4
+    sta _bandInk
+    ldd _newSig
+    jsr _paintBand
 @b2 ldd _newSig+2
     cmpd 2,y
     bne @chg2
@@ -505,11 +588,10 @@ asm void columns(){
     beq @dirt
 @chg2 inc _touched
     inc _wHurt
+    lda 5,y
+    sta _bandInk
     ldd 2,y
-    pshs a
-    cmpb ,s+
-    bls @dirt
-    jsr _paint1
+    jsr _paintBand
 @dirt ldx _dirtAt
     ldb ,x
     beq @fin
@@ -557,7 +639,7 @@ static void scene(){
  /* the player's distance from the cell centre on each axis, 0..128; the larger one picks the neighbour to blend with */
  byte x=px>>8,y=py>>8,otherX=x,otherY=y,fx=(byte)px,fy=(byte)py,ax=fx<128?128-fx:fx-128,ay=fy<128?128-fy:fy-128;
  start=angle*3;
- page=0;dirtBase=dirt+64;if(back==(byte*)0xe000){page=1;dirtBase=dirt+96;}
+ page=0;dirtBase=DIRT+64;if(back==(byte*)0xe000){page=1;dirtBase=DIRT+96;}
  if(!loadArea(areaAt(x,y)))return;
  view=viewAt(x,y);if(!view)return;
  if(ax>ay){if(fx<128)otherX--;else otherX++;blendWeight=ax;}

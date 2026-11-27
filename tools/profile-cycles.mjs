@@ -5,7 +5,7 @@
 // that starts at a function's first byte is a call, and the function has returned once S is above the S it was
 // entered with. Interrupts are charged the same way (fieldIrq shows up as its own entry).
 //
-//   node tools/profile-cycles.mjs CLOADM_DIR BUILD_DIR [pictures] [--after N]
+//   node tools/profile-cycles.mjs CLOADM_DIR BUILD_DIR [pictures] [--after N] [--keys LEFT,UP]
 //
 // BUILD_DIR must hold wyrmfire.bin, engine.map, wyrmfire.vdk. Output: cycles per picture, self and inclusive.
 import { createRequire } from 'node:module';
@@ -18,6 +18,9 @@ const [repo, dir] = args;
 const afterIdx = args.indexOf('--after');
 const AFTER = afterIdx >= 0 ? Number(args[afterIdx + 1]) : 3;
 const PICTURES = Number(args.filter((a, i) => /^\d+$/.test(a) && i > 1 && a !== args[afterIdx + 1])[0] || 1000);
+// --keys LEFT,UP: hold these keys down for the whole window (a view that changes every picture); default none
+const keysIdx = args.indexOf('--keys');
+const HELD = keysIdx >= 0 ? args[keysIdx + 1].split(',') : [];
 
 const files = boot.layout(dir);
 const s = await boot(repo, files);
@@ -55,6 +58,7 @@ const step = () => {
 const nextBoundary = () => { const before = r(0x200); let guard = 0; while (r(0x200) === before) { step(); if (++guard > 4000000) throw new Error('no picture'); } return m.cycle; };
 
 for (let i = 0; i < AFTER + 1; i++) { if (i > 0) m.setKey('ENTER', false); nextBoundary(); }
+for (const k of HELD) m.setKey(k, true);
 const startCycle = nextBoundary();
 counting = true;
 for (let p = 0; p < PICTURES; p++) nextBoundary();

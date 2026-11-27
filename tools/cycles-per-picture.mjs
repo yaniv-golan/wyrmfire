@@ -10,9 +10,10 @@
 // which keeps the device/event processing) and stops on the instruction at which $0200 changed, so each boundary
 // is the exact cycle of that store.
 //
-//   node tools/cycles-per-picture.mjs CLOADM_DIR BUILD_DIR [pictures] [--after N]
+//   node tools/cycles-per-picture.mjs CLOADM_DIR BUILD_DIR [pictures] [--after N] [--keys K,K]
 //
 //   pictures   how many picture boundaries to measure across (default 1000)
+//   --keys K,K  hold these keys for the whole window (e.g. LEFT: a turning view; default none: the still spawn view)
 //   --after N  skip N picture boundaries before the window starts (default 3), so the same build can be measured
 //              from two different start points; a measure that is real gives the same answer from either.
 //
@@ -26,6 +27,9 @@ const [repo, dir] = args;
 const afterIdx = args.indexOf('--after');
 const AFTER = afterIdx >= 0 ? Number(args[afterIdx + 1]) : 3;
 const PICTURES = Number(args.filter((a, i) => /^\d+$/.test(a) && i > 1 && a !== args[afterIdx + 1])[0] || 1000);
+// --keys LEFT,UP: hold these keys down for the whole window (a view that changes every picture); default none
+const keysIdx = args.indexOf('--keys');
+const HELD = keysIdx >= 0 ? args[keysIdx + 1].split(',') : [];
 
 const s = await boot(repo, boot.layout(dir));
 const m = s.machine;
@@ -51,6 +55,7 @@ for (let i = 0; i < AFTER + 1; i++) {
   nextBoundary();
 }
 
+for (const k of HELD) m.setKey(k, true);
 const startCycle = nextBoundary();
 let pictures = 0;
 while (pictures < PICTURES) { nextBoundary(); pictures++; }
@@ -58,6 +63,7 @@ const cycles = m.cycle - startCycle;
 
 console.log(JSON.stringify({
   after: AFTER,
+  ...(HELD.length ? { keys: HELD.join(',') } : {}),
   pictures,
   cycles,
   cyclesPerPicture: +(cycles / pictures).toFixed(2),

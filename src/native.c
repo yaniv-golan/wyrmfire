@@ -77,8 +77,10 @@ static void startLevel(){
 static byte page;
 /* What a sprite or a text left on a column, per page and column: dirt[p*32+c] is the first row touched,
  * dirt[64+..] the row after the last (0: nothing), dirt[128+..] which weapon frame stands on rows 124..159 of the
- * column (0: none). scene() repaints only those rows; the weapon is drawn again only where it is not standing. */
-static byte dirt[192];
+ * column (0: none). scene() repaints only those rows; the weapon is drawn again only where it is not standing.
+ * 192 bytes at $FE00-$FEBF: RAM above the stack (which starts at $FE00 and grows down) and below the I/O page,
+ * written by nothing else (measured, as the ranges above); zeroed by clearSignatures(). */
+#define DIRT ((byte*)0xfe00)
 static byte *dirtBase;          /* &dirt[64+page*32]: the first row is at -64, the weapon at +64 */
 static byte mTop,mEnd;
 static byte newSig[6];
@@ -219,7 +221,7 @@ static void move(int dir){
  if(cross(px>>8,py>>8,px>>8,y>>8)&&loadArea(areaAt(px>>8,y>>8)))py=y;
 }
 /* Every row of every column of both pages is to be repainted. */
-static void dirtyAll(){byte i;for(i=0;i<64;i++){dirt[i]=0;dirt[64+i]=160;}}
+static void dirtyAll(){byte i;for(i=0;i<64;i++){DIRT[i]=0;DIRT[64+i]=160;}}
 static void cue(byte finish){
  /* Build the end screen on the page that is NOT on the screen, then flip the SAM to show it, exactly as draw()
   * does at the end of its own body. `back` always holds the hidden page, so the text goes there.
