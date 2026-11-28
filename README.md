@@ -190,7 +190,7 @@ text says.
 runs the converter tests and attaches the engine, its SHA-256, the symbols,
 the converter and a `manifest.json` to a **draft** release; no level disk or
 WAD-derived file is ever attached. CI's *Release dry run* job does the same
-without publishing. Nothing has been released yet. See
+without publishing. The first release is `v0.1.0`. See
 [docs/RELEASE.md](docs/RELEASE.md) (assets, versioning, what CLOADM pins).
 
 ## No id Software content

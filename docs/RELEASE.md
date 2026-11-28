@@ -1,6 +1,6 @@
 # Releases and what CLOADM pins
 
-Nothing has been released. A release is cut by the owner only: run the
+The first release is `v0.1.0`. A release is cut by the owner only: run the
 **Release** workflow by hand with a version, or push a `vX.Y.Z` tag. It
 creates a **draft** GitHub release; publishing the draft is a separate,
 manual click. Branch pushes never release anything; CI's *Release dry run*
@@ -69,7 +69,7 @@ Pin per asset, never "latest":
 5. **Level format** `HGR2`/`HGA1`: a converter and an engine from different
    releases may only be mixed if `levelFormat` is equal.
 
-If cut from the current tree, `v0.1.0` would carry `wyrmfire.bin` with
-SHA-256 `63fd0d1f9e9a450dd9487ba37f01c0c0e3ea0d997f3778412db52dd5f071fbcb`,
-10,172 bytes. The other hashes follow the files at the tagged commit; take
+`v0.1.0` carries `wyrmfire.bin` with SHA-256
+`63783f6cd8b3508c6fdebfd1f2205b700fee2a834046578ad6e75922a98b11b8`,
+11,145 bytes. The other hashes follow the files at the tagged commit; take
 them from the release's `manifest.json`, not from here.
