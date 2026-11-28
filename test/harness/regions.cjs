@@ -44,7 +44,10 @@ for(const [z,cell] of [...first.entries()].sort((a,b)=>a[0]-b[0])){
   // The region loads in the first or the second picture after the move,
   // depending on where the main loop was; count both against a resident one.
   let from=-1,read=-1,to=-1;const m=s.machine,F=Math.round(m.tickHz/50);byte1=-1;
-  m.pcWatch=(pc)=>{if(from<0){if(pc===sym.diskRead){from=m.cycle;armed=true;}}else if(to<0){if(read<0&&pc===sym.checksum)read=m.cycle;if(r(sym.currentArea)===z)to=m.cycle;}};
+  // The position is poked wherever the main loop happens to be, so the engine can still be on its way into ANOTHER
+  // region (the one the last picture's move() asked for): every entry to diskRead() restarts the timing until the
+  // probed region is the current one, so only the load that brings it in is counted.
+  m.pcWatch=(pc)=>{if(to>=0)return;if(pc===sym.diskRead){from=m.cycle;read=-1;byte1=-1;armed=true;return;}if(from<0)return;if(read<0&&pc===sym.checksum)read=m.cycle;if(r(sym.currentArea)===z)to=m.cycle;};
   const p1=next(),p2=next(),resident=next();m.pcWatch=null;armed=false;
   if(to<0)throw Error('region '+z+' was not loaded');
   rows.push({region:z,cell,sectors:r(sectors+z-1),rawBytes:w(raw+2*(z-1)),loadFields:+((to-from)/F).toFixed(1),readFields:+((read-from)/F).toFixed(1),waitFields:+((byte1-from)/F).toFixed(2),netReadFields:+((read-byte1)/F).toFixed(2),unpackFields:+((to-read)/F).toFixed(1),pictureFields:p1+p2,residentFields:resident,area:r(sym.currentArea)});

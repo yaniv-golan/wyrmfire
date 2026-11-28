@@ -1,7 +1,8 @@
 // Picture-for-picture identity of two engine builds (Freedoom E1M1 fixture).
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-//   node test/harness/identity.cjs CLOADM_DIR RUN_DIR OUT.txt      writes one line per picture
+//   node test/harness/identity.cjs CLOADM_DIR RUN_DIR              the log must be the one pinned in test/identity.sha256
+//   node test/harness/identity.cjs CLOADM_DIR RUN_DIR OUT.txt      writes one line per picture instead
 //   cmp a.txt b.txt                                                two builds draw the same pictures
 //
 // The engine's game state depends on the pictures drawn, not on time: keys are read once a pass, monsters and
@@ -150,6 +151,10 @@ const boot = require('./boot.cjs'), files = boot.layout(dir), sym = boot.symbols
     }
   }
   if (!exits) throw Error('no exit to use in this map');
-  fs.writeFileSync(outFile, lines.join('\n') + '\n');
-  console.log(`${lines.length} pictures recorded to ${outFile}`);
+  const text = lines.join('\n') + '\n';
+  if (outFile) { fs.writeFileSync(outFile, text); console.log(`${lines.length} pictures recorded to ${outFile}`); return; }
+  // no OUT.txt: the log must be the pinned one (0493c18's pictures, test/identity.sha256)
+  const sha = require('crypto').createHash('sha256').update(text).digest('hex'), pin = fs.readFileSync(require('path').join(__dirname, '..', 'identity.sha256'), 'utf8').trim();
+  if (sha !== pin) throw Error(`the ${lines.length} pictures are not the pinned ones (log ${sha.slice(0, 12)}, pinned ${pin.slice(0, 12)})`);
+  console.log(`${lines.length} pictures, the pinned ones`);
 })().catch((e) => { console.error(e); process.exitCode = 1; });

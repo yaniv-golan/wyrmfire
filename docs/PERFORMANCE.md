@@ -77,8 +77,11 @@ fields for its first byte, and the whole read <= main + 5% (2,902) as a sanity c
 limits and CI passes them. Mutants (`test/pacing-mutants.sh`, in CI): an empty 600-pass loop in `loadArea()`
 before the unpack -- "checking and unpacking the 149 regions took 2229.6 fields in all, more than the 2087
 allowed"; an empty 20-pass loop after each `readTrackPart()` -- "from the first byte to the last, reading the 149
-regions took 1996.6 fields in all, more than the 1992.3 allowed" (the whole read, 2,848.9, is inside its 5%: the
-first version of this rule passed that mutant). A delay before `diskRead()` is entered is outside the timed
+regions took 1993.3 fields in all, more than the 1992.3 allowed" (its unpack is 2,077.7 and its whole read,
+2,842.4, is inside the 5%: the first version of this rule passed that mutant). The position is poked wherever the
+main loop happens to be, so the engine can still be on its way into another region; the timing restarts at every
+entry to `diskRead()` until the probed region is the current one, so only the load that brings it in is counted
+(before that, a second load could land inside one region's figure: the mutant's unpack once read 2,124). A delay before `diskRead()` is entered is outside the timed
 window and is the route harness's to see.
 
 ### Where the time went (cycles a picture, still spawn view, `tools/profile-cycles.mjs`, N=1000)
@@ -171,7 +174,8 @@ unchanged.
   to 1,743; each time the log was derived again from `0493c18`'s own binary with the new script and the branch
   compared against that, so the pin is always `0493c18`'s pictures: now `3b7a52af...`.) A mutant that leaves the
   weapon's frame marked as standing after a sprite's rows below row 124 were repainted differs from picture 19
-  (29 pictures in all); the 1,665-picture script did not see it.
+  (29 pictures in all); the 1,665-picture script did not see it. It is one of the mutants CI builds
+  (`test/pacing-mutants.sh`).
 * `test/harness/sprites.cjs`: the same measurements and the same 12 PNGs as `0493c18`, byte for byte. The harness
   itself changed in one way: it sampled `tdepth`, `c0` and `gW` at the next frame boundary, up to a field into the
   next picture, where `actors()` has already projected the player's own offset and left `tdepth` at 0; once a
@@ -223,9 +227,10 @@ so every call sends again -- "fire: 768 samples took 14.7 fields, want 26.7 (28.
 by the pictures drawn, not by the field clock".
 
 The cap has its own case: a shot during which a guard appears 1.5 cells ahead, whose frame is scaled to a new
-width in a picture that leaves 9.5 fields between two samples. The credit reaches 144 and stops there, the shot
-lasts 36.1 fields (26.7 plus what the cap withheld and the two first pictures of the guard) and must not end
-early. Mutant: the cap removed -- "fire, slow picture: the credit reached 252 samples, more than the 144 the
+width in a picture that leaves 9.5 fields between two samples. The credit reaches 144 and stops there; the harness counts the fields
+the cap did not credit (`audioSeen` moving on with 116 or more in hand: 7) and requires the length to be 26.7
+plus that many, within 3 fields (36.1 against 33.7: with the guard that close a picture is three fields, and the
+fields that pass outside its column loop are taken up in the next one). Mutant: the cap removed -- "fire, slow picture: the credit reached 252 samples, more than the 144 the
 four-field cap allows: after a slow picture the effect runs ahead".
 
 **Cost:** +14 cycles a picture when no effect plays (one `inc` in the field interrupt, twice a picture; the idle

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Mutants of the two timing rules that do not depend on how fast pictures are drawn; each must FAIL its harness,
-# by name.
+# Mutants of the rules that do not depend on how fast pictures are drawn (sound pacing, load time, the pinned
+# pictures); each must FAIL its harness, by name.
 #   sh test/pacing-mutants.sh CLOADM_DIR LEVEL_VDK
 # Needs the pinned CMOC + LWTOOLS (tools/versions.env). Each mutant is one exact edit of a copy of src/; an edit
 # that no longer matches the source is an error.
@@ -8,6 +8,8 @@
 #                  pictures drawn again (128 samples a picture) and play as fast as the renderer runs.
 #   no-cap      -- audioSlice() credits every field it missed, however many: after a picture of ten fields the
 #                  credit passes the 144 samples the cap allows and the effect runs ahead.
+#   weapon-dirt -- columns() repaints the rows a sprite left below row 124 without marking the weapon's frame as
+#                  gone, so the weapon is not drawn again there: the picture log is not the pinned one.
 #   slow-load   -- loadArea() idles for an empty 600-pass loop before it unpacks a region: the unpack total of the
 #                  regions probe rises past its limit.
 #   slowread20  -- diskRead() idles for an empty 20-pass loop after each part of a transfer: the net read (first
@@ -30,10 +32,11 @@ EOF
   if out=$(node "$root/test/harness/$6" "$cloadm" "$work/b" 2>&1); then
     echo "MUTANT $1 SURVIVED: $out"; exit 1
   fi
-  case "$out" in *"$5"*) echo "mutant $1 killed: $(echo "$out" | grep -m1 "$5")" ;; *) echo "MUTANT $1 failed for the wrong reason: $out"; exit 1 ;; esac
+  case "$out" in *"$5"*) echo "mutant $1 killed: $(echo "$out" | grep -m1 "$5")"; echo "$out" | grep -m1 unpackFieldsSum | cut -c1-200 || true ;; *) echo "MUTANT $1 failed for the wrong reason: $out"; exit 1 ;; esac
 }
 mutant per-picture native.c '    suba #4\n    bcs @done\n    sta _audioCredit\n' '' 'paced by the pictures drawn' sound.cjs
 mutant slow-load scene.h ' unpackTarget=AREA;length=' ' {word q;for(q=0;q<600;q++){}}unpackTarget=AREA;length=' 'the load path got slower' regions-limits.cjs
 mutant slowread20 floppy.h '    readTrackPart();if(diskError)' '    readTrackPart();{byte q;for(q=0;q<20;q++){}}if(diskError)' 'from the first byte to the last' regions-limits.cjs
 mutant no-cap native.c '    cmpa #116\n    bhs @have\n' '' 'the four-field cap allows' sound.cjs
+mutant weapon-dirt scene.h '    cmpb #124\n    bls @d1\n    inc _wHurt\n@d1 decb' '    cmpb #124\n    bls @d1\n@d1 decb' 'pictures are not the pinned ones' identity.cjs
 echo 'all pacing mutants killed'

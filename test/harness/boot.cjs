@@ -11,12 +11,14 @@ const ROOT = path.resolve(__dirname, '../..');
 
 function emu(repo) { return require(path.resolve(repo, 'js/emu.js')); }
 
-// CLOADM 0.4.1's Session names the machine on the screen `shownMachine` and takes it as a required argument of
+// CLOADM 0.4.1's Session has `personMachine` (the machine the person works on: its own target for cartridges and
+// disks) and `shownMachine` (the one on the screen), and takes the machine as a required argument of
 // pokeBytes(addr, bytes, machine). The harnesses were written against `s.machine` and a two-argument pokeBytes;
+// `s.machine` is personMachine where there is one, else shownMachine, and
 // session() gives a Session both, so each harness reads the same on either API.
 function session(Emu, options) {
   const s = new Emu.Session(options);
-  if (!('machine' in s)) Object.defineProperty(s, 'machine', { get() { return s.shownMachine; } });
+  if (!('machine' in s)) Object.defineProperty(s, 'machine', { get() { return s.personMachine || s.shownMachine; } });
   const poke = s.pokeBytes.bind(s);
   s.pokeBytes = (addr, bytes, m) => poke(addr, bytes, m || s.machine);
   return s;

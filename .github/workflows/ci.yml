@@ -162,8 +162,7 @@ jobs:
       # must draw what it drew. An intended change to the picture re-pins test/identity.sha256 in the same commit.
       - name: Pictures are the pinned ones (1,743 pictures, Freedoom E1M1)
         run: |
-          node test/harness/identity.cjs cloadm build shots/pictures.txt
-          sha256sum shots/pictures.txt | cut -d' ' -f1 | diff - test/identity.sha256
+          node test/harness/identity.cjs cloadm build
       # The display harnesses read the RENDERED frame (or the loader's own page), not screenText: they are what
       # catch a screen a player cannot see. They need build/loader.lst, which the engine artifact now carries.
       - name: Loading screen shows its controls
@@ -208,5 +207,5 @@ jobs:
           git checkout -q FETCH_HEAD && git log --oneline -1
       - name: Mutants
         run: sh test/clock-mutants.sh cloadm level/level.vdk
-      - name: Sound paced by pictures again, and a slower region load, must each fail their harness
+      - name: Sound paced by pictures again, no credit cap, a slower region load and a weapon left undrawn must each fail their harness
         run: sh test/pacing-mutants.sh cloadm level/level.vdk

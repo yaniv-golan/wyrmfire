@@ -32,8 +32,10 @@ const CAP = 116 - 1 + 29;   // no field is credited once 116 samples are in hand
     const w = cpu.write8.bind(cpu);
     cpu.write8 = (a, v) => { if ((a & 0xffff) === 0xff20 && pcNow >= sym.audioSlice && pcNow < end) dac.push([m.cycle, v & 0xff]); w(a, v); };
     const step = m.runCycles.bind(m);
-    let credit = 0;
-    m.pcWatch = sym.audioCredit === undefined ? (pc) => { pcNow = pc; } : (pc) => { pcNow = pc; const c = read(sym.audioCredit); if (c > credit) credit = c; };
+    // the most credit ever held, and the fields the cap did not credit: audioSeen moving on while 116 or more are in hand
+    let credit = 0, dropped = 0, seen = -1;
+    m.pcWatch = sym.audioCredit === undefined ? (pc) => { pcNow = pc; } : (pc) => { pcNow = pc; const c = read(sym.audioCredit), n = read(sym.audioSeen); if (c > credit) credit = c;
+      if (n !== seen) { if (dac.length && n === ((seen + 1) & 255) && c >= 116) dropped++; seen = n; } };
     // the level's own things stay where they are (ten of them near the spawn): one more is added for the pickup and the hit
     const sx = read(boot.PACK + 7), sy = read(boot.PACK + 8), n = read(sym.count), extra = (...v) => { s.pokeBytes(sym.things + 4 * n, v); s.pokeBytes(sym.waitForAttack + n, [0]); s.pokeBytes(sym.wind + n, [0]); put('count', n + 1); };
     picture(); picture();
@@ -65,21 +67,21 @@ const CAP = 116 - 1 + 29;   // no field is credited once 116 samples are in hand
     const F = Math.round(m.tickHz / 50), fields = (dac[dac.length - 1][0] - dac[0][0]) / F;
     let gap = 0, busiest = 0; const perField = new Map();
     dac.forEach((d, i) => { if (i) gap = Math.max(gap, (d[0] - dac[i - 1][0]) / F); const f = Math.floor(d[0] / F), c = (perField.get(f) || 0) + 1; perField.set(f, c); busiest = Math.max(busiest, c); });
-    rows[name] = { samples: got.length - 1, length: len, fields: +fields.toFixed(1), expected: +(len / RATE).toFixed(1), samplesAField: +((got.length - 1) / fields).toFixed(2), longestGap: +gap.toFixed(1), mostInAField: busiest, mostCredit: credit, same: got.length === len + 1 && got[len] === 128 && want.every((v, i) => v === got[i]) };
+    rows[name] = { samples: got.length - 1, length: len, fields: +fields.toFixed(1), expected: +(len / RATE).toFixed(1), samplesAField: +((got.length - 1) / fields).toFixed(2), longestGap: +gap.toFixed(1), mostInAField: busiest, mostCredit: credit, fieldsNotCredited: dropped, same: got.length === len + 1 && got[len] === 128 && want.every((v, i) => v === got[i]) };
   }
   console.log(JSON.stringify(rows, null, 1));
   if (REPORT) return;
   for (const [name, r] of Object.entries(rows)) {
     assert.ok(r.same, `${name}: the DAC did not get the asset's ${r.length} samples in order and then $80 (${r.samples} samples sent)`);
     // door: the view at the door is not the spawn view, and the door moves; allow it the same tolerance
-    // a gap of more than four fields loses what the cap does not credit, and no more than that
-    const late = Math.max(0, r.longestGap - 4);
     assert.ok(r.mostCredit <= CAP, `${name}: the credit reached ${r.mostCredit} samples, more than the ${CAP} the four-field cap allows: after a slow picture the effect runs ahead`);
     assert.ok(r.mostInAField <= CAP + 1, `${name}: ${r.mostInAField} samples in one field, more than the cap allows`);
-    if (name === 'fire, slow picture') assert.ok(r.longestGap > 4, `${name}: the longest gap was ${r.longestGap} fields: the picture was not slow enough to reach the cap`);
-    // (the slow case also draws the close guard on both pages for the first time: 5 fields of slack, not 2; what it
-    // must not do is end early)
-    assert.ok(r.fields >= r.expected - 2 && r.fields <= r.expected + late + (late ? 5 : 2), `${name}: ${r.length} samples took ${r.fields} fields, want ${r.expected} (${RATE} a field): the effect is paced by the pictures drawn, not by the field clock`);
+    if (name === 'fire, slow picture') assert.ok(r.fieldsNotCredited > 0, `${name}: no field went uncredited: the picture was not slow enough to reach the cap`);
+    // every field the cap did not credit makes the effect one field longer, and nothing else does
+    const want = +(r.expected + r.fieldsNotCredited).toFixed(1);
+    // (within 2 fields; 3 with the guard that close, where a picture is three fields and the fields that pass outside
+    // its column loop are taken up only in the next one)
+    assert.ok(Math.abs(r.fields - want) <= (r.fieldsNotCredited ? 3 : 2), `${name}: ${r.length} samples took ${r.fields} fields, want ${want} (${RATE} a field${r.fieldsNotCredited ? ', ' + r.fieldsNotCredited + ' fields not credited' : ''}): the effect is paced by the pictures drawn, not by the field clock`);
   }
   console.log('Sound PASS');
 })().catch((e) => { console.error(e); process.exitCode = 1; });
